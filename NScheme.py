@@ -122,7 +122,7 @@ class Mesh(object):
     def __sizeof__(self):
         return sys.getsizeof(self.elements) + sys.getsizeof(self.nodes)
 
-    def run(self, ks=1000, **kwargs):
+    def run(self, alpha=1E-8, cuda=False, **kwargs):
         ne, nn = len(self.elements), len(self.nodes)
         V = zeros(nn, dtype=float64)
 
@@ -140,11 +140,11 @@ class Mesh(object):
             for k in kwargs['boundary']:
                 for i in self.nodesOnLine(k, True):
                     V[i] = kwargs['boundary'][k]
+        func = lib.run if cuda else lib.runCPU
+        iters = func(ne, nn, c_double(alpha), elements, nodes,
+                     byref(ctypeslib.as_ctypes(V)), self.verbose)
 
-        lib.run(ne, nn, ks, elements, nodes,
-                byref(ctypeslib.as_ctypes(V)))
-
-        return V
+        return iters, V
 
     def nodesOnLine(self, tags, indexOnly=False):
         tags = [tags] if type(tags) is int else tags

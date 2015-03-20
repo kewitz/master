@@ -25,26 +25,25 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <math.h>
 #include <cuda.h>
 #include <cuda_runtime.h>
 #include "cuda_snippets.h"
 #include "nscheme.h"
 
-__global__ void kernel_iter(int nn, elementri *elements, node *nodes, double *V) {
+__global__ void kernel_iter(int nn, elementri *elements, node *nodes, double *V, double *R) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= nn) return;
 
     int e;
-    double diag_sum = 0.0, right_sum = 0.0, sn;
+    double diag_sum = 0.0, right_sum = 0.0, Vi;
 
     node Node = nodes[i];
     if (Node.calc == false) return;
-    sn = 0.0;
 
     elementri Element;
     for (e = 0; e < Node.ne; e++) {
         Element = elements[Node.elements[e]];
-        right_sum += sn;
         if (Node.i == Element.nodes[0]) {
             diag_sum  += Element.matriz[0];                     // A11
             right_sum -= Element.matriz[3]*V[Element.nodes[1]]; // A12
@@ -61,8 +60,9 @@ __global__ void kernel_iter(int nn, elementri *elements, node *nodes, double *V)
             right_sum -= Element.matriz[5]*V[Element.nodes[1]]; // A32
         }
     }
-
-    V[Node.i] = diag_sum == 0 ? 0.0 : right_sum/diag_sum;
+    Vi = diag_sum == 0 ? 0.0 : right_sum/diag_sum;
+    R[Node.i] = fabs(V[Node.i] - Vi);
+    V[Node.i] = Vi;
 
     return;
 }
@@ -93,14 +93,16 @@ __global__ void kernel_pre(int ne, elementri *elements, node *nodes) {
     return;
 }
 
-extern "C" void run(int ne, int nn, int ks, elementri *elements, node *nodes, double *V) {
-    cudaDeviceProp prop;
-    CudaSafeCall(cudaGetDeviceProperties(&prop, 0) );
-    printf("[!] Device Name: %s\n", prop.name);
-    printf("[!] %s compiled in %s %s\n", __FILE__, __DATE__, __TIME__);
+extern "C" int run(int ne, int nn, double alpha, elementri *elements, node *nodes, double *V, bool verbose) {
+    if (verbose) {
+        cudaDeviceProp prop;
+        CudaSafeCall(cudaGetDeviceProperties(&prop, 0) );
+        printf("[!] Device Name: %s\n", prop.name);
+        printf("[!] %s compiled in %s %s\n", __FILE__, __DATE__, __TIME__);
+    }
 
-    int k;
-    double *d_V;
+    int k = 1, i;
+    double *d_V, *d_R, *R;
     node *d_nodes;
     elementri *d_elements;
     const dim3 threads(512);
@@ -111,9 +113,11 @@ extern "C" void run(int ne, int nn, int ks, elementri *elements, node *nodes, do
            s_V = sizeof(double)*nn;
 
     // Malloc
+    R = (double*)malloc(s_V);
     CudaSafeCall(cudaMalloc(&d_elements, s_Elements));
     CudaSafeCall(cudaMalloc(&d_nodes, s_Nodes));
     CudaSafeCall(cudaMalloc(&d_V, s_V));
+    CudaSafeCall(cudaMalloc(&d_R, s_V));
     // Memcpy
     CudaSafeCall(cudaMemcpy(d_elements, elements, s_Elements, cudaMemcpyHostToDevice));
     CudaSafeCall(cudaMemcpy(d_nodes, nodes, s_Nodes, cudaMemcpyHostToDevice));
@@ -123,19 +127,107 @@ extern "C" void run(int ne, int nn, int ks, elementri *elements, node *nodes, do
     kernel_pre<<<preblocks, threads>>>(ne, d_elements, d_nodes);
     cudaDeviceSynchronize();
 
+    double r = 10*alpha;
     // Iterações
-    for (k = 0; k < ks; k++) {
-        kernel_iter<<<iterblocks, threads>>>(nn, d_elements, d_nodes, d_V);
+    while (r > alpha) {
+        kernel_iter<<<iterblocks, threads>>>(nn, d_elements, d_nodes, d_V, d_R);
         cudaDeviceSynchronize();
+
+        // Recalcula R à cada 100 iterações.
+        if (k % 100 == 0) {
+            r = 0.0;
+            CudaSafeCall(cudaMemcpy(R, d_R, s_V, cudaMemcpyDeviceToHost));
+            for (i = 0; i < nn; i++) {
+                node N = nodes[i];
+                if (N.calc) {
+                    r = (R[N.i] > r) ? R[N.i] : r;
+                }
+            }
+        }
+
+        k++;
     }
 
     CudaSafeCall(cudaMemcpy(V, d_V, s_V, cudaMemcpyDeviceToHost));
+    cudaDeviceSynchronize();
 
     cudaFree(d_V);
+    cudaFree(d_R);
     cudaFree(d_nodes);
     cudaFree(d_elements);
 
-    return;
+    return k;
+}
+
+extern "C" int runCPU(int ne, int nn, double alpha, elementri *elements, node *nodes, double *V, bool verbose) {
+    int i, k = 0;
+
+    // Pre-processamento
+    for (i = 0; i < ne; i++) {
+        elementri E = elements[i];
+        node N1 = nodes[E.nodes[0]], N2 = nodes[E.nodes[1]], N3 = nodes[E.nodes[2]];
+
+        // Calcula argumentos necessários
+        double J1, J2, J3, J4, dJ;
+        J1 = (double)N2.x - (double)N1.x;
+        J2 = (double)N2.y - (double)N1.y;
+        J3 = (double)N3.x - (double)N1.x;
+        J4 = (double)N3.y - (double)N1.y;
+        dJ = 2*(J1*J4 - J3*J2);
+
+        // Calcula a matriz de contribuições do elemento.
+        elements[i].matriz[0] = (pow(J2-J4,2) + pow(J3-J1,2))/dJ;   // C11
+        elements[i].matriz[1] = (pow(J4,2) + pow(J3,2))/dJ;         // C22
+        elements[i].matriz[2] = (pow(J2,2) + pow(J1,2))/dJ;         // C33
+        elements[i].matriz[3] = ((J2-J4)*J4 - (J3-J1)*J3)/dJ;       // C12 C21
+        elements[i].matriz[4] = ((J2-J4)*-1*J2 + (J3-J1)*J1)/dJ;    // C13 C31
+        elements[i].matriz[5] = (J4*-1*J2 - J3*J1)/dJ;              // C23 C32
+    }
+
+    double r = 10*alpha, diff;
+    // Iterações
+    while (r > alpha) {
+        if (k % 100 == 0) r = 0.0;
+        for (i = 0; i < nn; i++) {
+            int e;
+            double diag_sum = 0.0, right_sum = 0.0, Vi;
+
+            node Node = nodes[i];
+            if (Node.calc == true) {
+                elementri Element;
+                for (e = 0; e < Node.ne; e++) {
+                    Element = elements[Node.elements[e]];
+                    if (Node.i == Element.nodes[0]) {
+                        diag_sum  += Element.matriz[0];                     // A11
+                        right_sum -= Element.matriz[3]*V[Element.nodes[1]]; // A12
+                        right_sum -= Element.matriz[4]*V[Element.nodes[2]]; // A13
+                    }
+                    if (Node.i == Element.nodes[1]) {
+                        diag_sum += Element.matriz[1];                      // A22
+                        right_sum -= Element.matriz[3]*V[Element.nodes[1]]; // A21
+                        right_sum -= Element.matriz[5]*V[Element.nodes[2]]; // A23
+                    }
+                    if (Node.i == Element.nodes[2]) {
+                        diag_sum += Element.matriz[2];                      // A33
+                        right_sum -= Element.matriz[4]*V[Element.nodes[0]]; // A31
+                        right_sum -= Element.matriz[5]*V[Element.nodes[1]]; // A32
+                    }
+                }
+                Vi = diag_sum == 0 ? 0.0 : right_sum/diag_sum;
+
+                if (k % 100 == 0) {
+                    diff = fabs(V[Node.i] - Vi);
+                    r = (diff > r) ? diff : r;
+                }
+
+                V[Node.i] = Vi;
+            }
+        }
+
+        k++;
+    }
+
+    return k;
 }
 
 extern "C" void teste_Arrays(int ne, int nn, elementri *elements, node *nodes) {
