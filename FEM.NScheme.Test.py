@@ -2,10 +2,11 @@
 from numpy import *
 import NScheme as ns
 
-path = """/home/leo/Documents/Master/Pesquisa/TesteJacobiCUDA/"""
+path = """./res/"""
 
-for teste in ["teste1_1.msh", "teste1_2.msh"]:
+for teste in ["teste1_1.msh", "teste1_2.msh", "teste1_3.msh"]:
     m = ns.Mesh(file=path + teste)
+    print "[!] Loaded %s with %i nodes." % (teste, len(m.nodes))
 
     for n in m.nodesOnLine([1, 2, 3, 4]):
         n.calc = False
