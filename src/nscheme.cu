@@ -133,8 +133,8 @@ extern "C" int run(int ne, int nn, double alpha, elementri *elements, node *node
         kernel_iter<<<iterblocks, threads>>>(nn, d_elements, d_nodes, d_V, d_R);
         cudaDeviceSynchronize();
 
-        // Recalcula R à cada 100 iterações.
-        if (k % 100 == 0) {
+        // Recalcula R à cada 300 iterações.
+        if (k % 300 == 0) {
             r = 0.0;
             CudaSafeCall(cudaMemcpy(R, d_R, s_V, cudaMemcpyDeviceToHost));
             for (i = 0; i < nn; i++) {
@@ -187,7 +187,7 @@ extern "C" int runCPU(int ne, int nn, double alpha, elementri *elements, node *n
     double r = 10*alpha, diff;
     // Iterações
     while (r > alpha) {
-        if (k % 100 == 0) r = 0.0;
+        if (k % 300 == 0) r = 0.0;
         for (i = 0; i < nn; i++) {
             int e;
             double diag_sum = 0.0, right_sum = 0.0, Vi;
@@ -215,7 +215,7 @@ extern "C" int runCPU(int ne, int nn, double alpha, elementri *elements, node *n
                 }
                 Vi = diag_sum == 0 ? 0.0 : right_sum/diag_sum;
 
-                if (k % 100 == 0) {
+                if (k % 300 == 0) {
                     diff = fabs(V[Node.i] - Vi);
                     r = (diff > r) ? diff : r;
                 }

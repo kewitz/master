@@ -2,7 +2,7 @@ CC	= nvcc
 gen = -gencode arch=compute_30,code=sm_30
 flags = -Xcompiler -fPIC -g
 
-all: mdf nscheme
+all: nscheme
 
 rebuild: clean all
 
