@@ -31,12 +31,15 @@
 #include "cuda_snippets.h"
 #include "nscheme.h"
 
+__device__ __managed__ int d_convergence;
+
+
 // Kernel responsável por uma iteração.
-__global__ void kernel_iter(int nn, elementri *elements, node *nodes, double *V, double *R) {
+__global__ void kernel_iter(const int nn, const double alpha, elementri *elements, node *nodes, double *V) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= nn) return;
 
-    int e;
+    int e, c;
     double diag_sum = 0.0, right_sum = 0.0, Vi;
 
     node Node = nodes[i];
@@ -62,7 +65,8 @@ __global__ void kernel_iter(int nn, elementri *elements, node *nodes, double *V,
         }
     }
     Vi = diag_sum == 0 ? 0.0 : right_sum/diag_sum;
-    R[Node.i] = fabs(V[Node.i] - Vi);
+    c = fabs(V[Node.i] - Vi) < alpha;
+    atomicAnd(&d_convergence, c);
     V[Node.i] = Vi;
 
     return;
@@ -106,8 +110,8 @@ extern "C" int run(int ne, int nn, double alpha, elementri *elements, node *node
         printf("[!] %s compiled in %s %s\n", __FILE__, __DATE__, __TIME__);
     }
 
-    int k = 1, i;
-    double *d_V, *d_R, *R;
+    int k = 1;
+    double *d_V;
     node *d_nodes;
     elementri *d_elements;
     const dim3 threads(512);
@@ -118,11 +122,9 @@ extern "C" int run(int ne, int nn, double alpha, elementri *elements, node *node
            s_V = sizeof(double)*nn;
 
     // Malloc
-    R = (double*)malloc(s_V);
     CudaSafeCall(cudaMalloc(&d_elements, s_Elements));
     CudaSafeCall(cudaMalloc(&d_nodes, s_Nodes));
     CudaSafeCall(cudaMalloc(&d_V, s_V));
-    CudaSafeCall(cudaMalloc(&d_R, s_V));
     // Memcpy
     CudaSafeCall(cudaMemcpy(d_elements, elements, s_Elements, cudaMemcpyHostToDevice));
     CudaSafeCall(cudaMemcpy(d_nodes, nodes, s_Nodes, cudaMemcpyHostToDevice));
@@ -133,23 +135,12 @@ extern "C" int run(int ne, int nn, double alpha, elementri *elements, node *node
     cudaDeviceSynchronize();
 
     // Iterações
-    double r = 10*alpha;
-    while (r > alpha) {
-        kernel_iter<<<iterblocks, threads>>>(nn, d_elements, d_nodes, d_V, d_R);
+    d_convergence = 0;
+    while (d_convergence == 0) {
+        d_convergence = 1;
         cudaDeviceSynchronize();
-
-        // Calcula a convergência à cada 300 iterações.
-        if (k % 300 == 0) {
-            r = 0.0;
-            CudaSafeCall(cudaMemcpy(R, d_R, s_V, cudaMemcpyDeviceToHost));
-            for (i = 0; i < nn; i++) {
-                node N = nodes[i];
-                if (N.calc) {
-                    r = (R[N.i] > r) ? R[N.i] : r;
-                }
-            }
-        }
-
+        kernel_iter<<<iterblocks, threads>>>(nn, alpha, d_elements, d_nodes, d_V);
+        cudaDeviceSynchronize();
         k++;
     }
 
@@ -157,7 +148,6 @@ extern "C" int run(int ne, int nn, double alpha, elementri *elements, node *node
     cudaDeviceSynchronize();
 
     cudaFree(d_V);
-    cudaFree(d_R);
     cudaFree(d_nodes);
     cudaFree(d_elements);
 
@@ -192,7 +182,7 @@ extern "C" int runCPU(int ne, int nn, double alpha, elementri *elements, node *n
 
     double r = 10*alpha, diff;
     while (r > alpha) {
-        if (k % 300 == 0) r = 0.0;
+        r = 0.0;
         for (i = 0; i < nn; i++) {
             int e;
             double diag_sum = 0.0, right_sum = 0.0, Vi;
@@ -219,12 +209,8 @@ extern "C" int runCPU(int ne, int nn, double alpha, elementri *elements, node *n
                     }
                 }
                 Vi = diag_sum == 0 ? 0.0 : right_sum/diag_sum;
-
-                if (k % 300 == 0) {
-                    diff = fabs(V[Node.i] - Vi);
-                    r = (diff > r) ? diff : r;
-                }
-
+                diff = fabs(V[Node.i] - Vi);
+                r = (diff > r) ? diff : r;
                 V[Node.i] = Vi;
             }
         }
