@@ -30,14 +30,17 @@ import sys
 import matplotlib.pyplot as plt
 import matplotlib.tri as tri
 
+# Importa a biblioteca CUDA.
 lib = cdll.LoadLibrary('./nscheme.so')
 
 
 def timeit(t=False):
+    """Função cronômetro."""
     return time.time() - t if t else time.time()
 
 
 class _node(Structure):
+    """Struct `node` utilizada pelo programa C."""
     _fields_ = [("x", c_float),
                 ("y", c_float),
                 ("i", c_int),
@@ -47,11 +50,13 @@ class _node(Structure):
 
 
 class _elementri(Structure):
+    """Struct `element` utilizada pelo programa C."""
     _fields_ = [("nodes", c_int*3),
                 ("matriz", c_double*6)]
 
 
 class Node(object):
+    """Classe do nó."""
     def __init__(self, *args):
         assert len(args[0]) == 4, "{0} need 4 values".format(args)
         i, x, y, z = args[0]
@@ -61,7 +66,9 @@ class Node(object):
         self.elements = []
         self.calc = True
 
+    @property
     def ctyped(self):
+        """Retorna o Nó em formato `Struct _node`."""
         r = _node(self.x, self.y, self.i, self.calc, len(self.elements))
         for i, e in enumerate(self.elements):
             r.elements[i] = e
@@ -69,20 +76,26 @@ class Node(object):
 
 
 class Element(object):
+    """Classe do elemento."""
     def __init__(self, *args, **kwargs):
         x = args[0]
         i, typ, ntags = x[:3]
         self.i, self.dim = int(i)-1, int(typ)
         self.tags = [int(a) for a in x[3:3+int(ntags)]]
+        # If supplied the node list make reference, else use only the index.
         if 'nodes' in kwargs:
             self.nodes = [kwargs['nodes'][int(a)-1] for a in x[3+int(ntags):]]
             if self.dim == 2:
+                # If element is bi-dimensional, add the element index to
+                # its nodes related elements list.
                 for n in self.nodes:
                     n.elements.append(self.i)
         else:
             self.nodes = [int(a) for a in x[3+int(ntags):]]
 
+    @property
     def ctyped(self):
+        """Retorna o Elemento em formato `Struct _elementri`."""
         r = _elementri()
         for i, n in enumerate(self.nodes):
             r.nodes[i] = n.i
@@ -90,6 +103,7 @@ class Element(object):
 
 
 class Mesh(object):
+    """Classe da malha."""
     verbose = False
 
     def __init__(self, verbose=False, debug=False, **kwargs):
@@ -123,23 +137,25 @@ class Mesh(object):
         return sys.getsizeof(self.elements) + sys.getsizeof(self.nodes)
 
     def run(self, alpha=1E-8, cuda=False, **kwargs):
+        """Run simulation until converge to `alpha` residue."""
         ne, nn = len(self.elements), len(self.nodes)
         V = zeros(nn, dtype=float64)
-
+        # Get ctyped elements.
         c_elements = _elementri * ne
         elements = c_elements()
         for i, e in enumerate(self.elements):
-            elements[i] = e.ctyped()
-
+            elements[i] = e.ctyped
+        # Get ctyped nodes.
         c_nodes = _node * nn
         nodes = c_nodes()
         for i, n in enumerate(self.nodes):
-            nodes[i] = n.ctyped()
-
+            nodes[i] = n.ctyped
+        # Set up the boundary information.
         if 'boundary' in kwargs:
             for k in kwargs['boundary']:
                 for i in self.nodesOnLine(k, True):
                     V[i] = kwargs['boundary'][k]
+        # Check if it's CUDA capable.
         func = lib.run if cuda else lib.runCPU
         iters = func(ne, nn, c_double(alpha), elements, nodes,
                      byref(ctypeslib.as_ctypes(V)), self.verbose)
@@ -147,6 +163,10 @@ class Mesh(object):
         return iters, V
 
     def nodesOnLine(self, tags, indexOnly=False):
+        """
+        Return the list of nodes that are in elements tagged with `tags`.
+        Used to get boundary elements.
+        """
         tags = [tags] if type(tags) is int else tags
         r = [ns for tag in tags for el in self.elements
              for ns in el.nodes if el.dim == 1
@@ -156,6 +176,7 @@ class Mesh(object):
         return list(set(r))
 
     def elementsByTag(self, tags):
+        """Return elements tagged by `tag`."""
         tags = [tags] if type(tags) is int else tags
         e = [el for tag in tags for el in self.elements if el.dim == 2
              and tag in el.tags]

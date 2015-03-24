@@ -28,11 +28,11 @@ for teste in ["teste1_1.msh", "teste1_2.msh", "teste1_3.msh"]:
 
 # %% Plot
 bench = matrix(bench)
-tc = bench[:,0]
-tg = bench[:,1]
-ic = bench[:,2]
-ig = bench[:,3]
-nodes = bench[:,4].T.A[0]
+tc = bench[:, 0]
+tg = bench[:, 1]
+ic = bench[:, 2]
+ig = bench[:, 3]
+nodes = bench[:, 4].T.A[0]
 width = 1000
 
 plt.figure(1)

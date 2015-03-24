@@ -31,6 +31,7 @@
 #include "cuda_snippets.h"
 #include "nscheme.h"
 
+// Kernel responsável por uma iteração.
 __global__ void kernel_iter(int nn, elementri *elements, node *nodes, double *V, double *R) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= nn) return;
@@ -67,6 +68,8 @@ __global__ void kernel_iter(int nn, elementri *elements, node *nodes, double *V,
     return;
 }
 
+// Kernel de pre-processamento responsável por calcular as matrizes de contribu-
+// ição de todos os elementos.
 __global__ void kernel_pre(int ne, elementri *elements, node *nodes) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= ne) return;
@@ -93,6 +96,8 @@ __global__ void kernel_pre(int ne, elementri *elements, node *nodes) {
     return;
 }
 
+// Função externa que processa o problema, responsável por alocar a memória no
+// device e invocar todas os kernels necessários.
 extern "C" int run(int ne, int nn, double alpha, elementri *elements, node *nodes, double *V, bool verbose) {
     if (verbose) {
         cudaDeviceProp prop;
@@ -127,13 +132,13 @@ extern "C" int run(int ne, int nn, double alpha, elementri *elements, node *node
     kernel_pre<<<preblocks, threads>>>(ne, d_elements, d_nodes);
     cudaDeviceSynchronize();
 
-    double r = 10*alpha;
     // Iterações
+    double r = 10*alpha;
     while (r > alpha) {
         kernel_iter<<<iterblocks, threads>>>(nn, d_elements, d_nodes, d_V, d_R);
         cudaDeviceSynchronize();
 
-        // Recalcula R à cada 300 iterações.
+        // Calcula a convergência à cada 300 iterações.
         if (k % 300 == 0) {
             r = 0.0;
             CudaSafeCall(cudaMemcpy(R, d_R, s_V, cudaMemcpyDeviceToHost));
@@ -159,10 +164,11 @@ extern "C" int run(int ne, int nn, double alpha, elementri *elements, node *node
     return k;
 }
 
+// Função externa que processa o problema no CPU.
 extern "C" int runCPU(int ne, int nn, double alpha, elementri *elements, node *nodes, double *V, bool verbose) {
     int i, k = 0;
 
-    // Pre-processamento
+    // Pre-processamento. Calcula as matrizes de contribuição dos elementos.
     for (i = 0; i < ne; i++) {
         elementri E = elements[i];
         node N1 = nodes[E.nodes[0]], N2 = nodes[E.nodes[1]], N3 = nodes[E.nodes[2]];
@@ -185,7 +191,6 @@ extern "C" int runCPU(int ne, int nn, double alpha, elementri *elements, node *n
     }
 
     double r = 10*alpha, diff;
-    // Iterações
     while (r > alpha) {
         if (k % 300 == 0) r = 0.0;
         for (i = 0; i < nn; i++) {
