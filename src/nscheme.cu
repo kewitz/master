@@ -26,6 +26,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
+#include <time.h>
 #include <cuda.h>
 #include <cuda_runtime.h>
 #include "cuda_snippets.h"
@@ -35,15 +36,16 @@ __device__ __managed__ int d_convergence;
 
 
 // Kernel responsável por uma iteração.
-__global__ void kernel_iter(const int nn, const double alpha, elementri *elements, node *nodes, double *V) {
+__global__ void kernel_iter(const int nn, const int k, const double alpha, elementri *elements, node *nodes, double *V) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= nn) return;
 
     int e, c;
-    double diag_sum = 0.0, right_sum = 0.0, Vi;
+    double diag_sum = 0.0, right_sum = 0.0, Vi, Vo;
 
     node Node = nodes[i];
     if (Node.calc == false) return;
+    Vo = V[Node.i];
 
     elementri Element;
     for (e = 0; e < Node.ne; e++) {
@@ -65,9 +67,9 @@ __global__ void kernel_iter(const int nn, const double alpha, elementri *element
         }
     }
     Vi = diag_sum == 0 ? 0.0 : right_sum/diag_sum;
-    c = fabs(V[Node.i] - Vi) < alpha;
-    atomicAnd(&d_convergence, c);
+    c = fabs(Vo - Vi) < alpha*5;
     V[Node.i] = Vi;
+    atomicAnd(&d_convergence, c);
 
     return;
 }
@@ -102,14 +104,14 @@ __global__ void kernel_pre(int ne, elementri *elements, node *nodes) {
 
 // Função externa que processa o problema, responsável por alocar a memória no
 // device e invocar todas os kernels necessários.
-extern "C" int run(int ne, int nn, double alpha, elementri *elements, node *nodes, double *V, bool verbose) {
+extern "C" int run(int ne, int nn, double alpha, elementri *elements, node *nodes, double *V, bool verbose, float *bench) {
     if (verbose) {
         cudaDeviceProp prop;
         CudaSafeCall(cudaGetDeviceProperties(&prop, 0) );
         printf("[!] Device Name: %s\n", prop.name);
         printf("[!] %s compiled in %s %s\n", __FILE__, __DATE__, __TIME__);
     }
-
+    clock_t t;
     int k = 1;
     double *d_V;
     node *d_nodes;
@@ -122,6 +124,7 @@ extern "C" int run(int ne, int nn, double alpha, elementri *elements, node *node
            s_V = sizeof(double)*nn;
 
     // Malloc
+    t = clock();
     CudaSafeCall(cudaMalloc(&d_elements, s_Elements));
     CudaSafeCall(cudaMalloc(&d_nodes, s_Nodes));
     CudaSafeCall(cudaMalloc(&d_V, s_V));
@@ -129,20 +132,31 @@ extern "C" int run(int ne, int nn, double alpha, elementri *elements, node *node
     CudaSafeCall(cudaMemcpy(d_elements, elements, s_Elements, cudaMemcpyHostToDevice));
     CudaSafeCall(cudaMemcpy(d_nodes, nodes, s_Nodes, cudaMemcpyHostToDevice));
     CudaSafeCall(cudaMemcpy(d_V, V, s_V, cudaMemcpyHostToDevice));
+    t = clock() - t;
+    printf ("[!] GPU Malloc and MemCpy: %d clicks or %f seconds.\n",t,((float)t)/CLOCKS_PER_SEC);
+    bench[0] = ((float)t)/CLOCKS_PER_SEC;
 
     // Pre-processamento
+    t = clock();
     kernel_pre<<<preblocks, threads>>>(ne, d_elements, d_nodes);
     cudaDeviceSynchronize();
+    t = clock() - t;
+    printf ("[!] GPU Element integration: %d clicks or %f seconds.\n",t,((float)t)/CLOCKS_PER_SEC);
+    bench[1] = ((float)t)/CLOCKS_PER_SEC;
 
     // Iterações
+    t = clock();
     d_convergence = 0;
     while (d_convergence == 0) {
         d_convergence = 1;
         cudaDeviceSynchronize();
-        kernel_iter<<<iterblocks, threads>>>(nn, alpha, d_elements, d_nodes, d_V);
+        kernel_iter<<<iterblocks, threads>>>(nn, k, alpha, d_elements, d_nodes, d_V);
         cudaDeviceSynchronize();
         k++;
     }
+    t = clock() - t;
+    printf ("[!] GPU Convergence: %d clicks or %f seconds.\n",t,((float)t)/CLOCKS_PER_SEC);
+    bench[2] = ((float)t)/CLOCKS_PER_SEC;
 
     CudaSafeCall(cudaMemcpy(V, d_V, s_V, cudaMemcpyDeviceToHost));
     cudaDeviceSynchronize();
@@ -155,10 +169,12 @@ extern "C" int run(int ne, int nn, double alpha, elementri *elements, node *node
 }
 
 // Função externa que processa o problema no CPU.
-extern "C" int runCPU(int ne, int nn, double alpha, elementri *elements, node *nodes, double *V, bool verbose) {
+extern "C" int runCPU(int ne, int nn, double alpha, elementri *elements, node *nodes, double *V, bool verbose, float *bench) {
     int i, k = 0;
+    clock_t t;
 
     // Pre-processamento. Calcula as matrizes de contribuição dos elementos.
+    t = clock();
     for (i = 0; i < ne; i++) {
         elementri E = elements[i];
         node N1 = nodes[E.nodes[0]], N2 = nodes[E.nodes[1]], N3 = nodes[E.nodes[2]];
@@ -179,16 +195,20 @@ extern "C" int runCPU(int ne, int nn, double alpha, elementri *elements, node *n
         elements[i].matriz[4] = ((J2-J4)*-1*J2 + (J3-J1)*J1)/dJ;    // C13 C31
         elements[i].matriz[5] = (J4*-1*J2 - J3*J1)/dJ;              // C23 C32
     }
+    t = clock() - t;
+    printf ("[!] CPU Element integration: %d clicks or %f seconds.\n",t,((float)t)/CLOCKS_PER_SEC);
+    bench[0] = ((float)t)/CLOCKS_PER_SEC;
 
+    t = clock();
     double r = 10*alpha, diff;
     while (r > alpha) {
         r = 0.0;
         for (i = 0; i < nn; i++) {
             int e;
-            double diag_sum = 0.0, right_sum = 0.0, Vi;
-
+            double diag_sum = 0.0, right_sum = 0.0, Vi, Vo;
             node Node = nodes[i];
             if (Node.calc == true) {
+                Vo = V[Node.i];
                 elementri Element;
                 for (e = 0; e < Node.ne; e++) {
                     Element = elements[Node.elements[e]];
@@ -209,7 +229,7 @@ extern "C" int runCPU(int ne, int nn, double alpha, elementri *elements, node *n
                     }
                 }
                 Vi = diag_sum == 0 ? 0.0 : right_sum/diag_sum;
-                diff = fabs(V[Node.i] - Vi);
+                diff = fabs(Vo - Vi);
                 r = (diff > r) ? diff : r;
                 V[Node.i] = Vi;
             }
@@ -217,6 +237,9 @@ extern "C" int runCPU(int ne, int nn, double alpha, elementri *elements, node *n
 
         k++;
     }
+    t = clock() - t;
+    printf ("[!] CPU Convergence: %d clicks or %f seconds.\n",t,((float)t)/CLOCKS_PER_SEC);
+    bench[1] = ((float)t)/CLOCKS_PER_SEC;
 
     return k;
 }

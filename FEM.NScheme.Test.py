@@ -5,50 +5,66 @@ import matplotlib.pyplot as plt
 
 path = """./res/"""
 
-bench = []
+bench = {
+    'nodes': [],
+    'cpu': {
+        'iter': [],
+        'integration': [],
+        'solve': []
+        },
+    'gpu': {
+        'iter': [],
+        'malloc': [],
+        'integration': [],
+        'solve': []
+        },
+    }
+
 for teste in ["teste1_1.msh", "teste1_2.msh", "teste1_3.msh"]:
     m = ns.Mesh(file=path + teste)
+    bound = {1: 100.0, 2: 66.0, 3: 33.0, 4: 0.0}
     print "[!] Loaded %s with %i nodes." % (teste, len(m.nodes))
+    bench['nodes'].append(len(m.nodes))
 
     for n in m.nodesOnLine([1, 2, 3, 4]):
         n.calc = False
 
-    tc = ns.timeit()
-    ic, V = m.run(cuda=False, boundary={1: 100.0, 2: 66.0, 3: 33.0, 4: 0.0})
-    tc = ns.timeit(tc)
-    print "[!] Solve CPU: %i iterations in %.3fms." % (ic, tc)
+    vc, ic, bc = m.run(cuda=False, boundary=bound)
+    bench['cpu']['iter'].append(ic)
+    bench['cpu']['integration'].append(bc[0])
+    bench['cpu']['solve'].append(bc[1])
 
-    tg = ns.timeit()
-    ig, V2 = m.run(cuda=True, boundary={1: 100.0, 2: 66.0, 3: 33.0, 4: 0.0})
-    tg = ns.timeit(tg)
-    print "[!] Solve GPU: %i iterations in %.3fms." % (ig, tg)
+    vg, ig, bg = m.run(cuda=True, boundary=bound)
+    bench['gpu']['iter'].append(ig)
+    bench['gpu']['malloc'].append(bg[0])
+    bench['gpu']['integration'].append(bg[1])
+    bench['gpu']['solve'].append(bg[2])
 
-    bench.append((tc, tg, ic, ig, len(m.nodes)))
     del m
 
 # %% Plot
-bench = matrix(bench)
-tc = bench[:, 0]
-tg = bench[:, 1]
-ic = bench[:, 2]
-ig = bench[:, 3]
-nodes = bench[:, 4].T.A[0]
 width = 1000
+x = array(bench['nodes'])
 
 plt.figure(1)
-plt.title("Function Benchmark\n(Less is better)")
-plt.bar(nodes, tc, width, color="b", label="CPU")
-plt.bar(nodes+(width*1.1), tg, width, color="g", label="GPU")
+plt.title("Solving Benchmark\n(Less is better)")
+plt.bar(bench['nodes'], bench['cpu']['solve'], width, color="b", label="CPU")
+plt.bar(x+(width*1.1), bench['gpu']['solve'], width, color="g", label="GPU")
 plt.xlabel("Number of Nodes")
 plt.ylabel("Time [s]")
-plt.xticks(nodes+(width), nodes)
-plt.legend(fontsize="medium", fancybox=True, framealpha=.5)
+plt.xticks(x+(width), x)
+plt.yticks(bench['cpu']['solve']+bench['gpu']['solve'])
+plt.legend(fontsize="medium", fancybox=True, framealpha=.5, loc=9)
+plt.grid(axis="y")
 
+y = array(bench['cpu']['integration']+bench['gpu']['integration'])
 plt.figure(2)
-plt.title("Function Benchmark\n(Less is better)")
-plt.plot(nodes, ic, label="CPU")
-plt.plot(nodes, ig, label="GPU")
+plt.title("Element Integration Benchmark\n(Less is better)")
+plt.bar(bench['nodes'], bench['cpu']['integration'], width, color="b", label="CPU")
+plt.bar(x+(width*1.1), bench['gpu']['integration'], width, color="g", label="GPU")
 plt.xlabel("Number of Nodes")
-plt.ylabel("Number of Iterations")
-plt.xticks(nodes)
-plt.legend(fontsize="medium", fancybox=True, framealpha=.5)
+plt.ylabel("Time [ms]")
+plt.xticks(x+(width), x)
+plt.yticks(y, (y*1000).round(3))
+plt.legend(fontsize="medium", fancybox=True, framealpha=.5, loc=9)
+plt.grid(axis="y")

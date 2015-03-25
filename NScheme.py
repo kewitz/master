@@ -140,6 +140,8 @@ class Mesh(object):
         """Run simulation until converge to `alpha` residue."""
         ne, nn = len(self.elements), len(self.nodes)
         V = zeros(nn, dtype=float64)
+        bench = zeros(3, dtype=float32)
+
         # Get ctyped elements.
         c_elements = _elementri * ne
         elements = c_elements()
@@ -158,9 +160,10 @@ class Mesh(object):
         # Check if it's CUDA capable.
         func = lib.run if cuda else lib.runCPU
         iters = func(ne, nn, c_double(alpha), elements, nodes,
-                     byref(ctypeslib.as_ctypes(V)), self.verbose)
+                     byref(ctypeslib.as_ctypes(V)), self.verbose,
+                     byref(ctypeslib.as_ctypes(bench)))
 
-        return iters, V
+        return V, iters, bench.tolist()
 
     def nodesOnLine(self, tags, indexOnly=False):
         """
