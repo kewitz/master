@@ -36,12 +36,12 @@ __device__ __managed__ int d_convergence;
 
 
 // Kernel responsável por uma iteração.
-__global__ void kernel_iter(const int nn, const int k, const double alpha, elementri *elements, node *nodes, double *V) {
+__global__ void kernel_iter(const int nn, const int k, const float alpha, elementri *elements, node *nodes, float *V) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= nn) return;
 
     int e, c;
-    double diag_sum = 0.0, right_sum = 0.0, Vi, Vo;
+    float diag_sum = 0.0, right_sum = 0.0, Vi, Vo;
 
     node Node = nodes[i];
     if (Node.calc == false) return;
@@ -84,11 +84,11 @@ __global__ void kernel_pre(int ne, elementri *elements, node *nodes) {
     node N1 = nodes[E.nodes[0]], N2 = nodes[E.nodes[1]], N3 = nodes[E.nodes[2]];
 
     // Calcula argumentos necessários
-    double J1, J2, J3, J4, dJ;
-    J1 = (double)N2.x - (double)N1.x;
-    J2 = (double)N2.y - (double)N1.y;
-    J3 = (double)N3.x - (double)N1.x;
-    J4 = (double)N3.y - (double)N1.y;
+    float J1, J2, J3, J4, dJ;
+    J1 = (float)N2.x - (float)N1.x;
+    J2 = (float)N2.y - (float)N1.y;
+    J3 = (float)N3.x - (float)N1.x;
+    J4 = (float)N3.y - (float)N1.y;
     dJ = 2*(J1*J4 - J3*J2);
 
     // Calcula a matriz de contribuições do elemento.
@@ -104,7 +104,7 @@ __global__ void kernel_pre(int ne, elementri *elements, node *nodes) {
 
 // Função externa que processa o problema, responsável por alocar a memória no
 // device e invocar todas os kernels necessários.
-extern "C" int run(int ne, int nn, double alpha, elementri *elements, node *nodes, double *V, bool verbose, float *bench) {
+extern "C" int run(int ne, int nn, float alpha, elementri *elements, node *nodes, float *V, bool verbose, float *bench) {
     if (verbose) {
         cudaDeviceProp prop;
         CudaSafeCall(cudaGetDeviceProperties(&prop, 0) );
@@ -113,7 +113,7 @@ extern "C" int run(int ne, int nn, double alpha, elementri *elements, node *node
     }
     clock_t t;
     int k = 1;
-    double *d_V;
+    float *d_V;
     node *d_nodes;
     elementri *d_elements;
     const dim3 threads(512);
@@ -121,7 +121,7 @@ extern "C" int run(int ne, int nn, double alpha, elementri *elements, node *node
     const dim3 iterblocks(1 + nn/512);
     size_t s_Elements = sizeof(elementri)*ne,
            s_Nodes = sizeof(node)*nn,
-           s_V = sizeof(double)*nn;
+           s_V = sizeof(float)*nn;
 
     // Malloc
     t = clock();
@@ -169,7 +169,7 @@ extern "C" int run(int ne, int nn, double alpha, elementri *elements, node *node
 }
 
 // Função externa que processa o problema no CPU.
-extern "C" int runCPU(int ne, int nn, double alpha, elementri *elements, node *nodes, double *V, bool verbose, float *bench) {
+extern "C" int runCPU(int ne, int nn, float alpha, elementri *elements, node *nodes, float *V, bool verbose, float *bench) {
     int i, k = 0;
     clock_t t;
 
@@ -180,11 +180,11 @@ extern "C" int runCPU(int ne, int nn, double alpha, elementri *elements, node *n
         node N1 = nodes[E.nodes[0]], N2 = nodes[E.nodes[1]], N3 = nodes[E.nodes[2]];
 
         // Calcula argumentos necessários
-        double J1, J2, J3, J4, dJ;
-        J1 = (double)N2.x - (double)N1.x;
-        J2 = (double)N2.y - (double)N1.y;
-        J3 = (double)N3.x - (double)N1.x;
-        J4 = (double)N3.y - (double)N1.y;
+        float J1, J2, J3, J4, dJ;
+        J1 = (float)N2.x - (float)N1.x;
+        J2 = (float)N2.y - (float)N1.y;
+        J3 = (float)N3.x - (float)N1.x;
+        J4 = (float)N3.y - (float)N1.y;
         dJ = 2*(J1*J4 - J3*J2);
 
         // Calcula a matriz de contribuições do elemento.
@@ -200,12 +200,12 @@ extern "C" int runCPU(int ne, int nn, double alpha, elementri *elements, node *n
     bench[0] = ((float)t)/CLOCKS_PER_SEC;
 
     t = clock();
-    double r = 10*alpha, diff;
+    float r = 10*alpha, diff;
     while (r > alpha) {
         r = 0.0;
         for (i = 0; i < nn; i++) {
             int e;
-            double diag_sum = 0.0, right_sum = 0.0, Vi, Vo;
+            float diag_sum = 0.0, right_sum = 0.0, Vi, Vo;
             node Node = nodes[i];
             if (Node.calc == true) {
                 Vo = V[Node.i];
