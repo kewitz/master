@@ -1,16 +1,16 @@
 CC	= nvcc
-gen = -gencode arch=compute_30,code=sm_30
-flags = -Xcompiler -fPIC -g
+gen = -gencode arch=compute_35,code=sm_35
+flags = -Xcompiler -fPIC -g -G
 
 all: nscheme
 
 rebuild: clean all
 
 mdf:
-	$(CC) $(flags) -shared mdf.cu -lm -g -G -o ../mdf.so -lcuda $(gen)
+	$(CC) $(flags) -shared mdf.cu -lm -o ../mdf.so -lcuda $(gen)
 
 nscheme:
-	$(CC) $(flags) -shared nscheme.cu -lm -g -G -o ../nscheme.so -lcuda $(gen)
+	$(CC) $(flags) -shared nscheme.cu -lm -o ../nscheme.so -lcuda $(gen)
 
 clean:
 	rm *.o *.so
