@@ -193,7 +193,7 @@ extern "C" int runCPU(int ne, int nn, float alpha, float R, elementri *elements,
     }
     t = clock() - t;
     if (verbose) printf ("[!] CPU Element integration: %d clicks or %f seconds.\n", (int)t, ((float)t)/CLOCKS_PER_SEC);
-    bench[0] = (int)((float)t)/CLOCKS_PER_SEC;
+    bench[0] = ((float)t)/CLOCKS_PER_SEC;
 
     t = clock();
     float diff;
@@ -237,7 +237,7 @@ extern "C" int runCPU(int ne, int nn, float alpha, float R, elementri *elements,
     }
     t = clock() - t;
     if (verbose) printf ("[!] CPU Convergence: %d clicks or %f seconds.\n", (int)t, ((float)t)/CLOCKS_PER_SEC);
-    bench[1] = (int)((float)t)/CLOCKS_PER_SEC;
+    bench[1] = ((float)t)/CLOCKS_PER_SEC;
 
     return k;
 }

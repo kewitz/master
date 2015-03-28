@@ -32,6 +32,7 @@ import matplotlib.tri as tri
 
 # Importa a biblioteca CUDA.
 lib = cdll.LoadLibrary('./nscheme.so')
+lib.getInfo()
 
 
 def timeit(t=False):
@@ -136,7 +137,7 @@ class Mesh(object):
     def __sizeof__(self):
         return sys.getsizeof(self.elements) + sys.getsizeof(self.nodes)
 
-    def run(self, alpha=1E-4, cuda=False, **kwargs):
+    def run(self, alpha=1E-4, R=0.8, cuda=False, **kwargs):
         """Run simulation until converge to `alpha` residue."""
         ne, nn = len(self.elements), len(self.nodes)
         V = zeros(nn, dtype=float32)
@@ -159,7 +160,7 @@ class Mesh(object):
                     V[i] = kwargs['boundary'][k]
         # Check if it's CUDA capable.
         func = lib.run if cuda else lib.runCPU
-        iters = func(ne, nn, c_float(alpha), elements, nodes,
+        iters = func(ne, nn, c_float(alpha), c_float(R), elements, nodes,
                      byref(ctypeslib.as_ctypes(V)), self.verbose,
                      byref(ctypeslib.as_ctypes(bench)))
 
