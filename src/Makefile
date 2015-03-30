@@ -1,6 +1,6 @@
 CC	= nvcc
 gen = -gencode arch=compute_35,code=sm_35
-flags = -Xcompiler -fPIC -g -G
+flags = -Xcompiler -fPIC -g -G -O0
 
 all: nscheme
 

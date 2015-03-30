@@ -32,8 +32,9 @@
 #include "cuda_snippets.h"
 #include "nscheme.h"
 
-__device__ __managed__ int d_convergence;
+#define DEBUG
 
+__device__ __managed__ int d_convergence;
 
 // Kernel responsável por uma iteração.
 __global__ void kernel_iter(const int nn, const int k, const float alpha, const float R, elementri *elements, node *nodes, float *V) {
@@ -44,34 +45,39 @@ __global__ void kernel_iter(const int nn, const int k, const float alpha, const 
     if (Node.calc == false) return;
 
     int e, c;
-    float diag_sum = 0.0,
-          right_sum = 0.0,
-          Vo = V[Node.i],
-          Vi,
-          diff;
+    float diag_sum = 0.0, right_sum = 0.0, Vi, diff, Vo;
     elementri Element;
 
     for (e = 0; e < Node.ne; e++) {
         Element = elements[Node.elements[e]];
         if (Node.i == Element.nodes[0]) {
             diag_sum  += Element.matriz[0];                     // A11
-            right_sum -= Element.matriz[3]*V[Element.nodes[1]] + Element.matriz[4]*V[Element.nodes[2]];
+            right_sum -= Element.matriz[3]*V[Element.nodes[1]];
+            right_sum -= Element.matriz[4]*V[Element.nodes[2]];
         }
         if (Node.i == Element.nodes[1]) {
             diag_sum += Element.matriz[1];                      // A22
-            right_sum -= Element.matriz[3]*V[Element.nodes[1]] + Element.matriz[5]*V[Element.nodes[2]];
+            right_sum -= Element.matriz[3]*V[Element.nodes[1]];
+            right_sum -= Element.matriz[5]*V[Element.nodes[2]];
         }
         if (Node.i == Element.nodes[2]) {
             diag_sum += Element.matriz[2];                      // A33
-            right_sum -= Element.matriz[4]*V[Element.nodes[0]] + Element.matriz[5]*V[Element.nodes[1]];
+            right_sum -= Element.matriz[4]*V[Element.nodes[0]];
+            right_sum -= Element.matriz[5]*V[Element.nodes[1]];
         }
     }
-    Vi = diag_sum == 0 ? 0.0 : right_sum/diag_sum;
+    Vi = diag_sum == 0 ? 0.0 : fdividef(right_sum, diag_sum);     // right_sum/diag_sum
+    Vo = V[Node.i];
     diff = Vi - Vo;
-    Vi += R*diff;
-    V[Node.i] = Vi;
-    c = fabs(diff) > fabs(Vi*alpha);
+    Vi = fmaf(R, diff, Vi);                 // R*diff + Vi
+    c = fabsf(diff) > fabsf(Vi*alpha);
     atomicOr(&d_convergence, c);
+    V[Node.i] = Vi;
+
+#ifdef DEBUG
+    if (i == 1000 && R==0.5 && k%10==1)
+        printf("%i: Vo:%E Vi:%E diff:%E\n", k, Vo, Vi, diff);
+#endif
 
     return;
 }
@@ -106,7 +112,7 @@ __global__ void kernel_pre(int ne, elementri *elements, node *nodes) {
 
 // Função externa que processa o problema, responsável por alocar a memória no
 // device e invocar todas os kernels necessários.
-extern "C" int run(int ne, int nn, float alpha, float R, elementri *elements, node *nodes, float *V, bool verbose, float *bench) {
+extern "C" int run(const int ne, const int nn, const float alpha, const float R, elementri *elements, node *nodes, float *V, bool verbose, float *bench) {
     clock_t t;
     int k = 1;
     float *d_V;
@@ -240,15 +246,6 @@ extern "C" int runCPU(int ne, int nn, float alpha, float R, elementri *elements,
     bench[1] = ((float)t)/CLOCKS_PER_SEC;
 
     return k;
-}
-
-extern "C" void getInfo() {
-    cudaDeviceProp prop;
-    CudaSafeCall(cudaGetDeviceProperties(&prop, 0) );
-    printf("[!] Device Name: %s\n", prop.name);
-    printf("[!] %s compiled in %s %s\n", __FILE__, __DATE__, __TIME__);
-
-    return;
 }
 
 extern "C" void teste_Arrays(int ne, int nn, elementri *elements, node *nodes) {

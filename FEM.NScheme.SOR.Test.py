@@ -4,6 +4,7 @@ import NScheme as ns
 import matplotlib.pyplot as plt
 
 path = """./res/"""
+plt.style.use('bmh')
 
 alpha = 1E-5
 m = ns.Mesh(file=path + "teste1_1.msh", verbose=False)
@@ -16,7 +17,7 @@ cuda = True
 vc, ic, bc = m.run(cuda=cuda, boundary=bound, alpha=alpha, R=0)
 print "R=0 converged in %i iterations." % ic
 
-for r in arange(.1,1,.1):
+for r in [.3, .5]:
     v, i, b = m.run(cuda=cuda, boundary=bound, alpha=alpha, R=r)
     e = abs(vc - v).max()
     print "R=%f converged in %i iterations. Emax=%f" % (r, i, e)

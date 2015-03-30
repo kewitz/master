@@ -22,17 +22,17 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 """
+import time
+import sys
 from numpy import *
 from ctypes import *
 from matplotlib.patches import Polygon
-import time
-import sys
 import matplotlib.pyplot as plt
 import matplotlib.tri as tri
 
 # Importa a biblioteca CUDA.
 lib = cdll.LoadLibrary('./nscheme.so')
-lib.getInfo()
+assert lib.getCUDAdevices() > 0, "No CUDA capable devices found."
 
 
 def timeit(t=False):
