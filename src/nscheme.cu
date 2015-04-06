@@ -32,12 +32,11 @@
 #include "cuda_snippets.h"
 #include "nscheme.h"
 
-#define DEBUG
 
 __device__ __managed__ int d_convergence;
 
 // Kernel responsável por uma iteração.
-__global__ void kernel_iter(const int nn, const int k, const float alpha, const float R, elementri *elements, node *nodes, float *V) {
+__global__ void kernel_iter(const int nn, const int k, const float alpha, float R, elementri *elements, node *nodes, float *V) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= nn) return;
 
@@ -51,33 +50,28 @@ __global__ void kernel_iter(const int nn, const int k, const float alpha, const 
     for (e = 0; e < Node.ne; e++) {
         Element = elements[Node.elements[e]];
         if (Node.i == Element.nodes[0]) {
-            diag_sum  += Element.matriz[0];                     // A11
+            diag_sum  += Element.matriz[0];
             right_sum -= Element.matriz[3]*V[Element.nodes[1]];
             right_sum -= Element.matriz[4]*V[Element.nodes[2]];
         }
         if (Node.i == Element.nodes[1]) {
-            diag_sum += Element.matriz[1];                      // A22
+            diag_sum += Element.matriz[1];
             right_sum -= Element.matriz[3]*V[Element.nodes[1]];
             right_sum -= Element.matriz[5]*V[Element.nodes[2]];
         }
         if (Node.i == Element.nodes[2]) {
-            diag_sum += Element.matriz[2];                      // A33
+            diag_sum += Element.matriz[2];
             right_sum -= Element.matriz[4]*V[Element.nodes[0]];
             right_sum -= Element.matriz[5]*V[Element.nodes[1]];
         }
     }
-    Vi = diag_sum == 0 ? 0.0 : fdividef(right_sum, diag_sum);     // right_sum/diag_sum
+    Vi = diag_sum == 0 ? 0.0 : fdividef(right_sum, diag_sum);
     Vo = V[Node.i];
     diff = Vi - Vo;
-    Vi = fmaf(R, diff, Vi);                 // R*diff + Vi
+    Vi = fmaf(R, diff, Vi);
     c = fabsf(diff) > fabsf(Vi*alpha);
     atomicOr(&d_convergence, c);
     V[Node.i] = Vi;
-
-#ifdef DEBUG
-    if (i == 1000 && R==0.5 && k%10==1)
-        printf("%i: Vo:%E Vi:%E diff:%E\n", k, Vo, Vi, diff);
-#endif
 
     return;
 }
@@ -112,10 +106,11 @@ __global__ void kernel_pre(int ne, elementri *elements, node *nodes) {
 
 // Função externa que processa o problema, responsável por alocar a memória no
 // device e invocar todas os kernels necessários.
-extern "C" int run(const int ne, const int nn, const float alpha, const float R, elementri *elements, node *nodes, float *V, bool verbose, float *bench) {
+extern "C" int run(const int ne, const int nn, const float alpha, const float Rf, const float T, elementri *elements, node *nodes, float *V, bool verbose, float *bench) {
     clock_t t;
     int k = 1;
     float *d_V;
+    float R;
     node *d_nodes;
     elementri *d_elements;
     const dim3 threads(512);
@@ -151,6 +146,8 @@ extern "C" int run(const int ne, const int nn, const float alpha, const float R,
     d_convergence = 1;
     while (d_convergence == 1) {
         d_convergence = 0;
+        R = Rf*(1-expf(-k/T));
+        printf("R = %f\n", R);
         cudaDeviceSynchronize();
         kernel_iter<<<iterblocks, threads>>>(nn, k, alpha, R, d_elements, d_nodes, d_V);
         cudaDeviceSynchronize();
@@ -171,9 +168,13 @@ extern "C" int run(const int ne, const int nn, const float alpha, const float R,
 }
 
 // Função externa que processa o problema no CPU.
-extern "C" int runCPU(int ne, int nn, float alpha, float R, elementri *elements, node *nodes, float *V, bool verbose, float *bench) {
+extern "C" int runCPU(int ne, int nn, float alpha, float Rf, float T, elementri *elements, node *nodes, float *V, bool verbose, float *bench) {
     int i, k = 0;
+    float R;
     clock_t t;
+
+    float *Vos = (float*) malloc(nn*sizeof(float));
+    memcpy(Vos, V, nn*sizeof(float));
 
     // Pre-processamento. Calcula as matrizes de contribuição dos elementos.
     t = clock();
@@ -206,6 +207,7 @@ extern "C" int runCPU(int ne, int nn, float alpha, float R, elementri *elements,
     bool run = true;
     while (run) {
         run = false;
+        R = Rf*(1-expf(-k/T));
         for (i = 0; i < nn; i++) {
             int e;
             float diag_sum = 0.0, right_sum = 0.0, Vi, Vo;
@@ -216,19 +218,19 @@ extern "C" int runCPU(int ne, int nn, float alpha, float R, elementri *elements,
                 for (e = 0; e < Node.ne; e++) {
                     Element = elements[Node.elements[e]];
                     if (Node.i == Element.nodes[0]) {
-                        diag_sum  += Element.matriz[0];                     // A11
-                        right_sum -= Element.matriz[3]*V[Element.nodes[1]];
-                        right_sum -= Element.matriz[4]*V[Element.nodes[2]];
+                        diag_sum  += Element.matriz[0];
+                        right_sum -= Element.matriz[3]*Vos[Element.nodes[1]];
+                        right_sum -= Element.matriz[4]*Vos[Element.nodes[2]];
                     }
                     if (Node.i == Element.nodes[1]) {
-                        diag_sum += Element.matriz[1];                      // A22
-                        right_sum -= Element.matriz[3]*V[Element.nodes[1]];
-                        right_sum -= Element.matriz[5]*V[Element.nodes[2]];
+                        diag_sum += Element.matriz[1];
+                        right_sum -= Element.matriz[3]*Vos[Element.nodes[1]];
+                        right_sum -= Element.matriz[5]*Vos[Element.nodes[2]];
                     }
                     if (Node.i == Element.nodes[2]) {
-                        diag_sum += Element.matriz[2];                      // A33
-                        right_sum -= Element.matriz[4]*V[Element.nodes[0]];
-                        right_sum -= Element.matriz[5]*V[Element.nodes[1]];
+                        diag_sum += Element.matriz[2];
+                        right_sum -= Element.matriz[4]*Vos[Element.nodes[0]];
+                        right_sum -= Element.matriz[5]*Vos[Element.nodes[1]];
                     }
                 }
                 Vi = diag_sum == 0 ? 0.0 : right_sum/diag_sum;
@@ -237,6 +239,10 @@ extern "C" int runCPU(int ne, int nn, float alpha, float R, elementri *elements,
                 run |= fabs(diff) > fabs(Vi*alpha);
                 V[Node.i] = Vi;
             }
+        }
+        for (i = 0; i < nn; i++) {
+            node Node = nodes[i];
+            Vos[Node.i] = V[Node.i];
         }
 
         k++;

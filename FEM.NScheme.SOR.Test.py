@@ -17,8 +17,8 @@ cuda = True
 vc, ic, bc = m.run(cuda=cuda, boundary=bound, alpha=alpha, R=0)
 print "R=0 converged in %i iterations." % ic
 
-for r in [.3, .5]:
-    v, i, b = m.run(cuda=cuda, boundary=bound, alpha=alpha, R=r)
+for r in [.37]:
+    v, i, b = m.run(cuda=cuda, boundary=bound, alpha=alpha, R=r, T=100)
     e = abs(vc - v).max()
     print "R=%f converged in %i iterations. Emax=%f" % (r, i, e)
 
