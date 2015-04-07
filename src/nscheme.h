@@ -26,6 +26,7 @@
 typedef struct {
     int nodes[3];
     float matriz[6]; // C11 C22 C33 C12 C13 C23
+    float eps;
 } elementri;
 
 typedef struct {

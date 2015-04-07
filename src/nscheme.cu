@@ -65,7 +65,7 @@ __global__ void kernel_iter(const int nn, const int k, const float alpha, float 
             right_sum -= Element.matriz[5]*V[Element.nodes[1]];
         }
     }
-    Vi = diag_sum == 0 ? 0.0 : fdividef(right_sum, diag_sum);
+    Vi = diag_sum == 0 ? 0.0 : fdividef(right_sum*Element.eps, diag_sum*Element.eps);
     Vo = V[Node.i];
     diff = Vi - Vo;
     Vi = fmaf(R, diff, Vi);
@@ -147,7 +147,6 @@ extern "C" int run(const int ne, const int nn, const float alpha, const float Rf
     while (d_convergence == 1) {
         d_convergence = 0;
         R = Rf*(1-expf(-k/T));
-        printf("R = %f\n", R);
         cudaDeviceSynchronize();
         kernel_iter<<<iterblocks, threads>>>(nn, k, alpha, R, d_elements, d_nodes, d_V);
         cudaDeviceSynchronize();

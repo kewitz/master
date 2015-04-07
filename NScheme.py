@@ -34,6 +34,8 @@ import matplotlib.tri as tri
 lib = cdll.LoadLibrary('./nscheme.so')
 assert lib.getCUDAdevices() > 0, "No CUDA capable devices found."
 
+eps = 8.854187E-12
+
 
 def timeit(t=False):
     """Função cronômetro."""
@@ -53,7 +55,8 @@ class _node(Structure):
 class _elementri(Structure):
     """Struct `element` utilizada pelo programa C."""
     _fields_ = [("nodes", c_int*3),
-                ("matriz", c_float*6)]
+                ("matriz", c_float*6),
+                ("eps", c_float)]
 
 
 class Node(object):
@@ -82,6 +85,7 @@ class Element(object):
         x = args[0]
         i, typ, ntags = x[:3]
         self.i, self.dim = int(i)-1, int(typ)
+        self.eps = eps
         self.tags = [int(a) for a in x[3:3+int(ntags)]]
         # If supplied the node list make reference, else use only the index.
         if 'nodes' in kwargs:
@@ -93,11 +97,13 @@ class Element(object):
                     n.elements.append(self.i)
         else:
             self.nodes = [int(a) for a in x[3+int(ntags):]]
+        assert len(self.nodes) <= 3, "You can only use triangular elements."
 
     @property
     def ctyped(self):
         """Retorna o Elemento em formato `Struct _elementri`."""
         r = _elementri()
+        r.eps = float32(self.eps)
         for i, n in enumerate(self.nodes):
             r.nodes[i] = n.i
         return r
@@ -160,7 +166,8 @@ class Mesh(object):
                     V[i] = kwargs['boundary'][k]
         # Check if it's CUDA capable.
         func = lib.run if cuda else lib.runCPU
-        iters = func(ne, nn, c_float(alpha), c_float(R), c_float(T), elements, nodes,
+        iters = func(ne, nn, c_float(alpha), c_float(R), c_float(T), elements,
+                     nodes,
                      byref(ctypeslib.as_ctypes(V)), self.verbose,
                      byref(ctypeslib.as_ctypes(bench)))
 
