@@ -143,7 +143,7 @@ class Mesh(object):
     def __sizeof__(self):
         return sys.getsizeof(self.elements) + sys.getsizeof(self.nodes)
 
-    def run(self, alpha=1E-5, R=0.8, T=14.11, cuda=False, **kwargs):
+    def run(self, alpha=1E-5, R=0.0, T=14.11, cuda=False, **kwargs):
         """Run simulation until converge to `alpha` residue."""
         ne, nn = len(self.elements), len(self.nodes)
         V = zeros(nn, dtype=float32)

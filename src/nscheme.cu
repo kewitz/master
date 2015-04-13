@@ -33,7 +33,7 @@
 #include "nscheme.h"
 
 
-__device__ __managed__ int d_convergence;
+__device__ int d_convergence;
 
 // Kernel responsável por uma iteração.
 __global__ void kernel_iter(const int nn, const int k, const float alpha, float R, elementri *elements, node *nodes, float *V) {
@@ -108,7 +108,7 @@ __global__ void kernel_pre(int ne, elementri *elements, node *nodes) {
 // device e invocar todas os kernels necessários.
 extern "C" int run(const int ne, const int nn, const float alpha, const float Rf, const float T, elementri *elements, node *nodes, float *V, bool verbose, float *bench) {
     clock_t t;
-    int k = 1;
+    int k = 1, convergence;
     float *d_V;
     float R;
     node *d_nodes;
@@ -143,13 +143,14 @@ extern "C" int run(const int ne, const int nn, const float alpha, const float Rf
 
     // Iterações
     t = clock();
-    d_convergence = 1;
-    while (d_convergence == 1) {
-        d_convergence = 0;
+    convergence = 1;
+    while (convergence == 1) {
+        convergence = 0;
         R = Rf*(1-expf(-k/T));
-        cudaDeviceSynchronize();
+        cudaMemcpyToSymbol(d_convergence, &convergence, sizeof(int));
         kernel_iter<<<iterblocks, threads>>>(nn, k, alpha, R, d_elements, d_nodes, d_V);
         cudaDeviceSynchronize();
+        cudaMemcpyFromSymbol(&convergence, d_convergence, sizeof(int));
         k++;
     }
     t = clock() - t;
