@@ -33,10 +33,8 @@
 #include "nscheme.h"
 
 
-__device__ int d_convergence;
-
 // Kernel responsável por uma iteração.
-__global__ void kernel_iter(const int nn, const int k, const float alpha, float R, elementri *elements, node *nodes, float *V) {
+__global__ void kernel_iter(const int nn, const int k, const float alpha, float R, elementri *elements, node *nodes, float *V, int *conv) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= nn) return;
 
@@ -70,7 +68,7 @@ __global__ void kernel_iter(const int nn, const int k, const float alpha, float 
     diff = Vi - Vo;
     Vi = fmaf(R, diff, Vi);
     c = fabsf(diff) > fabsf(Vi*alpha);
-    atomicOr(&d_convergence, c);
+    atomicOr(conv, c);
     V[Node.i] = Vi;
 
     return;
@@ -108,7 +106,7 @@ __global__ void kernel_pre(int ne, elementri *elements, node *nodes) {
 // device e invocar todas os kernels necessários.
 extern "C" int run(const int ne, const int nn, const float alpha, const float Rf, const float T, elementri *elements, node *nodes, float *V, bool verbose, float *bench) {
     clock_t t;
-    int k = 1, convergence;
+    int k = 1, conv, *d_conv;
     float *d_V;
     float R;
     node *d_nodes;
@@ -125,6 +123,7 @@ extern "C" int run(const int ne, const int nn, const float alpha, const float Rf
     CudaSafeCall(cudaMalloc(&d_elements, s_Elements));
     CudaSafeCall(cudaMalloc(&d_nodes, s_Nodes));
     CudaSafeCall(cudaMalloc(&d_V, s_V));
+    CudaSafeCall(cudaMalloc(&d_conv, sizeof(int)));
     // Memcpy
     CudaSafeCall(cudaMemcpy(d_elements, elements, s_Elements, cudaMemcpyHostToDevice));
     CudaSafeCall(cudaMemcpy(d_nodes, nodes, s_Nodes, cudaMemcpyHostToDevice));
@@ -143,14 +142,14 @@ extern "C" int run(const int ne, const int nn, const float alpha, const float Rf
 
     // Iterações
     t = clock();
-    convergence = 1;
-    while (convergence == 1) {
-        convergence = 0;
+    conv = 1;
+    while (conv == 1) {
+        conv = 0;
         R = Rf*(1-expf(-k/T));
-        cudaMemcpyToSymbol(d_convergence, &convergence, sizeof(int));
-        kernel_iter<<<iterblocks, threads>>>(nn, k, alpha, R, d_elements, d_nodes, d_V);
+        cudaMemcpy(d_conv, &conv, sizeof(int), cudaMemcpyHostToDevice);
+        kernel_iter<<<iterblocks, threads>>>(nn, k, alpha, R, d_elements, d_nodes, d_V, d_conv);
         cudaDeviceSynchronize();
-        cudaMemcpyFromSymbol(&convergence, d_convergence, sizeof(int));
+        cudaMemcpy(&conv, d_conv, sizeof(int), cudaMemcpyDeviceToHost);
         k++;
     }
     t = clock() - t;
@@ -163,6 +162,7 @@ extern "C" int run(const int ne, const int nn, const float alpha, const float Rf
     cudaFree(d_V);
     cudaFree(d_nodes);
     cudaFree(d_elements);
+    cudaFree(d_conv);
 
     return k;
 }
