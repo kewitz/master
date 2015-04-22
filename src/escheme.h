@@ -31,16 +31,10 @@ typedef struct {
 typedef struct {
     float x;
     float y;
-    int i;
     bool calc;
-    int ne;
-    int elements[10];
 } node;
 
 // HEADER
-__global__ void kernel_pre();
-__global__ void kernel_iter();
-extern "C" void teste_Arrays(int, int, elementri *, node *);
 
 // Snippets
 extern "C" void getInfo() {

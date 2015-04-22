@@ -31,9 +31,7 @@ import matplotlib.pyplot as plt
 import matplotlib.tri as tri
 
 # Importa a biblioteca CUDA.
-lib = cdll.LoadLibrary('./nscheme.so')
-#assert lib.getCUDAdevices() > 0, "No CUDA capable devices found."
-
+lib = cdll.LoadLibrary('./escheme.so')
 eps = 8.854187E-12
 
 
@@ -46,10 +44,7 @@ class _node(Structure):
     """Struct `node` utilizada pelo programa C."""
     _fields_ = [("x", c_float),
                 ("y", c_float),
-                ("i", c_int),
-                ("calc", c_bool),
-                ("ne", c_int),
-                ("elements", c_int*10)]
+                ("calc", c_bool)]
 
 
 class _elementri(Structure):
@@ -73,9 +68,7 @@ class Node(object):
     @property
     def ctyped(self):
         """Retorna o Nó em formato `Struct _node`."""
-        r = _node(self.x, self.y, self.i, self.calc, len(self.elements))
-        for i, e in enumerate(self.elements):
-            r.elements[i] = e
+        r = _node(self.x, self.y, self.calc)
         return r
 
 
@@ -131,7 +124,8 @@ class Mesh(object):
         # Map nodes and Elements.
         self.nodes = map(lambda x: Node(x), nodes)
         self.elements = map(lambda x: Element(x, nodes=self.nodes), elements)
-        # Verbosity...
+        # Verbosity...a1z2q3
+        
         if verbose:
             self.verbose = verbose
             print "Done parsing {0} nodes and {1} elements."\
@@ -143,7 +137,7 @@ class Mesh(object):
     def __sizeof__(self):
         return sys.getsizeof(self.elements) + sys.getsizeof(self.nodes)
 
-    def run(self, alpha=1E-5, R=0.0, T=14.11, cuda=False, **kwargs):
+    def run(self, errmin=1E-7, maxiter=1000, cuda=False, **kwargs):
         """Run simulation until converge to `alpha` residue."""
         if cuda:
             assert lib.getCUDAdevices() > 0, "No CUDA capable devices found."
@@ -170,8 +164,8 @@ class Mesh(object):
                 for i in self.nodesOnLine(k, True):
                     V[i] = kwargs['boundary'][k]
         # Check if it's CUDA capable.
-        iters = func(ne, nn, c_float(alpha), c_float(R), c_float(T), elements,
-                     nodes, byref(ctypeslib.as_ctypes(V)), self.verbose,
+        iters = func(ne, nn, maxiter, c_float(errmin), elements, nodes,
+                     byref(ctypeslib.as_ctypes(V)), self.verbose,
                      byref(ctypeslib.as_ctypes(bench)))
 
         return V, iters, bench.tolist()

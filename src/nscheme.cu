@@ -1,26 +1,25 @@
 /*
- * The MIT License (MIT)
- *
- * Copyright (c) 2014 Leonardo Kewitz
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- *
+ The MIT License (MIT)
+
+ Copyright (c) 2014 Leonardo Kewitz
+
+ Permission is hereby granted, free of charge, to any person obtaining a copy
+ of this software and associated documentation files (the "Software"), to deal
+ in the Software without restriction, including without limitation the rights
+ to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ copies of the Software, and to permit persons to whom the Software is
+ furnished to do so, subject to the following conditions:
+
+ The above copyright notice and this permission notice shall be included in all
+ copies or substantial portions of the Software.
+
+ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ SOFTWARE.
  */
 
 #include <stdio.h>
@@ -34,7 +33,9 @@
 
 
 // Kernel responsável por uma iteração.
-__global__ void kernel_iter(const int nn, const int k, const float alpha, float R, elementri *elements, node *nodes, float *V, int *conv) {
+__global__ void kernel_iter(const int nn, const int k, const float alpha,
+                            float R, elementri *elements, node *nodes, float *V,
+                            int *conv) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= nn) return;
 
@@ -63,7 +64,9 @@ __global__ void kernel_iter(const int nn, const int k, const float alpha, float 
             right_sum -= Element.matriz[5]*V[Element.nodes[1]];
         }
     }
-    Vi = diag_sum == 0 ? 0.0 : fdividef(right_sum*Element.eps, diag_sum*Element.eps);
+
+    Vi = diag_sum == 0 ? 0.0 : fdividef(right_sum*Element.eps,
+                                        diag_sum*Element.eps);
     Vo = V[Node.i];
     diff = Vi - Vo;
     Vi = fmaf(R, diff, Vi);
@@ -104,7 +107,9 @@ __global__ void kernel_pre(int ne, elementri *elements, node *nodes) {
 
 // Função externa que processa o problema, responsável por alocar a memória no
 // device e invocar todas os kernels necessários.
-extern "C" int run(const int ne, const int nn, const float alpha, const float Rf, const float T, elementri *elements, node *nodes, float *V, bool verbose, float *bench) {
+extern "C" int run(const int ne, const int nn, const float alpha,
+                   const float Rf, const float T, elementri *elements,
+                   node *nodes, float *V, bool verbose, float *bench) {
     clock_t t;
     int k = 1, conv, *d_conv;
     float *d_V;
@@ -125,11 +130,14 @@ extern "C" int run(const int ne, const int nn, const float alpha, const float Rf
     CudaSafeCall(cudaMalloc(&d_V, s_V));
     CudaSafeCall(cudaMalloc(&d_conv, sizeof(int)));
     // Memcpy
-    CudaSafeCall(cudaMemcpy(d_elements, elements, s_Elements, cudaMemcpyHostToDevice));
+    CudaSafeCall(cudaMemcpy(d_elements, elements, s_Elements,
+                            cudaMemcpyHostToDevice));
     CudaSafeCall(cudaMemcpy(d_nodes, nodes, s_Nodes, cudaMemcpyHostToDevice));
     CudaSafeCall(cudaMemcpy(d_V, V, s_V, cudaMemcpyHostToDevice));
     t = clock() - t;
-    if (verbose) printf ("[!] GPU Malloc and MemCpy: %d clicks or %f seconds.\n", (int)t, ((float)t)/CLOCKS_PER_SEC);
+    if (verbose)
+        printf("[!] GPU Malloc and MemCpy: %d clicks or %f seconds.\n",
+               (int)t, ((float)t)/CLOCKS_PER_SEC);
     bench[0] = ((float)t)/CLOCKS_PER_SEC;
 
     // Pre-processamento
@@ -137,7 +145,9 @@ extern "C" int run(const int ne, const int nn, const float alpha, const float Rf
     kernel_pre<<<preblocks, threads>>>(ne, d_elements, d_nodes);
     cudaDeviceSynchronize();
     t = clock() - t;
-    if (verbose) printf ("[!] GPU Element integration: %d clicks or %f seconds.\n", (int)t, ((float)t)/CLOCKS_PER_SEC);
+    if (verbose)
+        printf("[!] GPU Element integration: %d clicks or %f seconds.\n",
+               (int)t, ((float)t)/CLOCKS_PER_SEC);
     bench[1] = ((float)t)/CLOCKS_PER_SEC;
 
     // Iterações
@@ -147,13 +157,16 @@ extern "C" int run(const int ne, const int nn, const float alpha, const float Rf
         conv = 0;
         R = Rf*(1-expf(-k/T));
         cudaMemcpy(d_conv, &conv, sizeof(int), cudaMemcpyHostToDevice);
-        kernel_iter<<<iterblocks, threads>>>(nn, k, alpha, R, d_elements, d_nodes, d_V, d_conv);
+        kernel_iter<<<iterblocks, threads>>>(nn, k, alpha, R, d_elements,
+                                             d_nodes, d_V, d_conv);
         cudaDeviceSynchronize();
         cudaMemcpy(&conv, d_conv, sizeof(int), cudaMemcpyDeviceToHost);
         k++;
     }
     t = clock() - t;
-    if (verbose) printf ("[!] GPU Convergence: %d clicks or %f seconds.\n", (int)t, ((float)t)/CLOCKS_PER_SEC);
+    if (verbose)
+        printf("[!] GPU Convergence: %d clicks or %f seconds.\n", (int)t,
+               ((float)t)/CLOCKS_PER_SEC);
     bench[2] = ((float)t)/CLOCKS_PER_SEC;
 
     CudaSafeCall(cudaMemcpy(V, d_V, s_V, cudaMemcpyDeviceToHost));
@@ -168,7 +181,9 @@ extern "C" int run(const int ne, const int nn, const float alpha, const float Rf
 }
 
 // Função externa que processa o problema no CPU.
-extern "C" int runCPU(int ne, int nn, float alpha, float Rf, float T, elementri *elements, node *nodes, float *V, bool verbose, float *bench) {
+extern "C" int runCPU(int ne, int nn, float alpha, float Rf, float T,
+                      elementri *elements, node *nodes, float *V, bool verbose,
+                      float *bench) {
     int i, k = 0;
     float R;
     clock_t t;
@@ -180,7 +195,8 @@ extern "C" int runCPU(int ne, int nn, float alpha, float Rf, float T, elementri 
     t = clock();
     for (i = 0; i < ne; i++) {
         elementri E = elements[i];
-        node N1 = nodes[E.nodes[0]], N2 = nodes[E.nodes[1]], N3 = nodes[E.nodes[2]];
+        node N1 = nodes[E.nodes[0]], N2 = nodes[E.nodes[1]],
+             N3 = nodes[E.nodes[2]];
 
         // Calcula argumentos necessários
         float J1, J2, J3, J4, dJ;
@@ -199,7 +215,9 @@ extern "C" int runCPU(int ne, int nn, float alpha, float Rf, float T, elementri 
         elements[i].matriz[5] = (J4*-1*J2 - J3*J1)/dJ;              // C23 C32
     }
     t = clock() - t;
-    if (verbose) printf ("[!] CPU Element integration: %d clicks or %f seconds.\n", (int)t, ((float)t)/CLOCKS_PER_SEC);
+    if (verbose)
+        printf("[!] CPU Element integration: %d clicks or %f seconds.\n",
+               (int)t, ((float)t)/CLOCKS_PER_SEC);
     bench[0] = ((float)t)/CLOCKS_PER_SEC;
 
     t = clock();
@@ -248,7 +266,9 @@ extern "C" int runCPU(int ne, int nn, float alpha, float Rf, float T, elementri 
         k++;
     }
     t = clock() - t;
-    if (verbose) printf ("[!] CPU Convergence: %d clicks or %f seconds.\n", (int)t, ((float)t)/CLOCKS_PER_SEC);
+    if (verbose)
+        printf("[!] CPU Convergence: %d clicks or %f seconds.\n", (int)t,
+               ((float)t)/CLOCKS_PER_SEC);
     bench[1] = ((float)t)/CLOCKS_PER_SEC;
 
     return k;
