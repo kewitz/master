@@ -37,11 +37,14 @@ typedef struct {
 // HEADER
 
 // Snippets
+extern "C" void hello() {
+    printf("[!] %s compiled in %s %s\n", __FILE__, __DATE__, __TIME__);
+}
+
 extern "C" void getInfo() {
     cudaDeviceProp prop;
     CudaSafeCall(cudaGetDeviceProperties(&prop, 0) );
     printf("[!] Device Name: %s\n", prop.name);
-    printf("[!] %s compiled in %s %s\n", __FILE__, __DATE__, __TIME__);
     return;
 }
 

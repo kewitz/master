@@ -14,9 +14,9 @@ for e in m.elementsByTag([12]):
 for n in m.nodesOnLine([1, 2, 9, 10, 5]):
     n.calc = False
 
-errmin = 1E-7
+errmin = 1E-56
 
-v, ic, bc = m.run(cuda=False, boundary=bound, errmin=errmin)
+vc, ic, bc = m.run(cuda=False, boundary=bound, errmin=errmin, maxiter=1000)
 print "Took %i iterations." % (ic)
 
-m.plotResult(result=v)
+m.plotResult(result=vc)

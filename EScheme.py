@@ -32,6 +32,7 @@ import matplotlib.tri as tri
 
 # Importa a biblioteca CUDA.
 lib = cdll.LoadLibrary('./escheme.so')
+lib.hello()
 eps = 8.854187E-12
 
 
@@ -125,7 +126,7 @@ class Mesh(object):
         self.nodes = map(lambda x: Node(x), nodes)
         self.elements = map(lambda x: Element(x, nodes=self.nodes), elements)
         # Verbosity...a1z2q3
-        
+
         if verbose:
             self.verbose = verbose
             print "Done parsing {0} nodes and {1} elements."\
@@ -143,7 +144,7 @@ class Mesh(object):
             assert lib.getCUDAdevices() > 0, "No CUDA capable devices found."
             func = lib.run
         else:
-            func = lib.runCPU
+            func = lib.runCPUCG
         ne, nn = len(self.elements), len(self.nodes)
         V = zeros(nn, dtype=float32)
         bench = zeros(3, dtype=float32)
