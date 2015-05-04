@@ -28,7 +28,7 @@ __author__ = "kewitz"
 __license__ = "MIT"
 DEBUG = True
 
-from ctypes import cdll, byref, c_double, c_int
+from ctypes import cdll, byref, c_double, c_int, c_float
 from numpy import zeros, matrix, array, ctypeslib, random, linalg, float32
 import time
 
@@ -40,14 +40,14 @@ lib = cdll.LoadLibrary('./escheme.so')
 
 n = 3
 err = 1E-5
-iteracoes = 100
+iteracoes = 20000
 #A = matrix(random.random((n, n)), dtype = float32)
-A = matrix('2 0 0; 0 2 0; 0 0 2', dtype=float32)
+A = matrix('2 1 0; 1 2 1; 0 1 2', dtype=float32)
 b = array(random.random(n), dtype=float32)
 x = zeros(n, dtype=float32)
 
 print linalg.solve(A, b)
-k = lib.testeSD(n, iteracoes, c_double(err), byref(ctypeslib.as_ctypes(A)),
+k = lib.testeCG(n, iteracoes, c_float(err), byref(ctypeslib.as_ctypes(A)),
                  byref(ctypeslib.as_ctypes(x)), byref(ctypeslib.as_ctypes(b)))
 print "Done in %i iterations." % k
 print x

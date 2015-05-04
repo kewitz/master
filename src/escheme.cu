@@ -121,7 +121,7 @@ extern "C" int runCPU(int ne, int nn, int kmax, float errmin,
 
     // Iterações.
     int k = 1;
-    float rho, rhop, alpha, beta, somaPQ, errf, errlat = 10*errmin;
+    float rho, rhop, alpha, beta, somaPQ, errf=1, errlat = 10*errmin;
     while (errlat > errmin && k < kmax) {
         rho = 0.0;
         // Pré-condicionador Jacobi e calcula Rho.
@@ -190,12 +190,8 @@ extern "C" int runCPUCG(int ne, int nn, int kmax, float errmin,
                       elementri *elements, node *nodes, float *V, bool verbose,
                       float *bench) {
     int i, k;
-    float rho, rho_, alpha, beta;
-    float *r = static_cast<float*>(malloc(nn*sizeof(float)));
-    float *d = static_cast<float*>(malloc(nn*sizeof(float)));
-    float *q = static_cast<float*>(malloc(nn*sizeof(float)));
-    float *rsum = static_cast<float*>(malloc(nn*sizeof(float)));
-    float *dsum = static_cast<float*>(malloc(nn*sizeof(float)));
+    float *rsum = (float*)malloc(nn*sizeof(float));
+    float *dsum = (float*)malloc(nn*sizeof(float));
 
     // Inicialização dos vetores.
     for (i = 0; i < nn; i++) {
@@ -220,17 +216,17 @@ extern "C" int runCPUCG(int ne, int nn, int kmax, float errmin,
 
         // Calcula a matriz de contribuições do elemento.
         elements[i].matriz[0] = dJ != 0.0 ?
-            (pow(J2-J4, 2) + pow(J3-J1, 2))*E.eps/dJ : 0.0;
+            (pow(J2-J4, 2.0) + pow(J3-J1, 2.0))/dJ : 0.0;
         elements[i].matriz[1] = dJ != 0.0 ?
-            (pow(J4, 2) + pow(J3, 2))*E.eps/dJ : 0.0;
+            (pow(J4, 2.0) + pow(J3, 2.0))/dJ : 0.0;
         elements[i].matriz[2] = dJ != 0.0 ?
-            (pow(J2, 2) + pow(J1, 2))*E.eps/dJ : 0.0;
+            (pow(J2, 2.0) + pow(J1, 2.0))/dJ : 0.0;
         elements[i].matriz[3] = dJ != 0.0 ?
-            ((J2-J4)*J4 - (J3-J1)*J3)*E.eps/dJ : 0.0;
+            ((J2-J4)*J4 - (J3-J1)*J3)/dJ : 0.0;
         elements[i].matriz[4] = dJ != 0.0 ?
-            ((J2-J4)*-1*J2 + (J3-J1)*J1)*E.eps/dJ : 0.0;
+            ((J3-J1)*J1 - (J2-J4)*J2)/dJ : 0.0;
         elements[i].matriz[5] = dJ != 0.0 ?
-            (J4*-1*J2 - J3*J1)*E.eps/dJ : 0.0;
+            (J4*-1*J2 - J3*J1)/dJ : 0.0;
     }
 
     // Calcula dsum e rsum.
@@ -243,69 +239,64 @@ extern "C" int runCPUCG(int ne, int nn, int kmax, float errmin,
         dsum[n2] += E.matriz[1];
         dsum[n3] += E.matriz[2];
 
-        rsum[n1] -= E.matriz[3]*V[n2] - E.matriz[4]*V[n3];
-        rsum[n2] -= E.matriz[3]*V[n1] - E.matriz[5]*V[n3];
-        rsum[n3] -= E.matriz[4]*V[n1] - E.matriz[5]*V[n2];
+        rsum[n1] += - E.matriz[3]*V[n2] - E.matriz[4]*V[n3];
+        rsum[n2] += - E.matriz[3]*V[n1] - E.matriz[5]*V[n3];
+        rsum[n3] += - E.matriz[4]*V[n1] - E.matriz[5]*V[n2];
     }
 
-    // r = b - Ax
-    rho_ = 0.0;
-    float ri;
+    // CG
+    float ri, alpha, beta, sum1, sum2, sum3 = 1, sum4;
+    float *r = (float*)malloc(nn*sizeof(float));
+    float *p = (float*)malloc(nn*sizeof(float));
+    float *u = (float*)malloc(nn*sizeof(float));
+
     for (i = 0; i < nn; i++) {
-        if (nodes[i].calc) {
-            ri = rsum[i] - dsum[i]*V[i];
-            rho_ += pow(ri, 2);
-        } else {
-            ri = 0.0;
-        }
+        ri = nodes[i].calc ? rsum[i] - dsum[i]*V[i] : 0.0;
+        p[i] = ri;
         r[i] = ri;
-        d[i] = ri;
     }
-    rho = rho_;
 
-    float dq;
     k = 1;
-    errmin = pow(errmin, 2);
-    while (k < kmax && rho_ > errmin*rho) {
-        // q = Ad
+    while (k < kmax && fabs(sqrt(sum3)) > errmin) {
         for (i = 0; i < nn; i++)
-            q[i] = 0.0;
+            u[i] = 0.0;
         for (i = 0; i < ne; i++) {
             E = elements[i];
             n1 = E.nodes[0]; n2 = E.nodes[1]; n3 = E.nodes[2];
 
-            q[n1] += E.matriz[0]*d[n1] + E.matriz[3]*d[n2] + E.matriz[4]*d[n3];
-            q[n2] += E.matriz[3]*d[n1] + E.matriz[1]*d[n2] + E.matriz[5]*d[n3];
-            q[n3] += E.matriz[4]*d[n1] + E.matriz[5]*d[n2] + E.matriz[2]*d[n3];
+            u[n1] += E.matriz[0]*p[n1] + E.matriz[3]*p[n2] + E.matriz[4]*p[n3];
+            u[n2] += E.matriz[3]*p[n1] + E.matriz[1]*p[n2] + E.matriz[5]*p[n3];
+            u[n3] += E.matriz[4]*p[n1] + E.matriz[5]*p[n2] + E.matriz[2]*p[n3];
         }
 
-        // alpha = rho_/d'q
-        dq = 0.0;
         for (i = 0; i < nn; i++)
-            dq += d[i]*q[i];
-        alpha = dq != 0 ? rho_/dq : 0.0;
+            if (!nodes[i].calc)
+                u[i] = p[i];
 
-        // x = x + alpha*d
-        for (i = 0; i < nn; i++)
-            if (nodes[i].calc)
-                V[i] += alpha*d[i];
-
-        rho = rho_;
-        rho_ = 0.0;
+        sum1 = 0.0; sum2 = 0.0;
         for (i = 0; i < nn; i++) {
-            if (nodes[i].calc) {
-                if (k%50 == 1)
-                    ri = rsum[i] - dsum[i]*V[i];
-                else
-                    ri -= alpha*q[i];
-                r[i] = ri;
-                rho_ += pow(ri, 2);
-            }
+            sum1 += p[i]*r[i];
+            sum2 += p[i]*u[i];
         }
 
-        beta = rho != 0 ? rho_/rho : 0.0;
-        for (i = 0; i < nn; i++)
-            d[i] = r[i] + beta*d[i];
+        alpha = sum2 != 0.0 ? sum1/sum2 : 0.0;
+
+        for (i = 0; i < nn; i++) {
+            V[i] += alpha*p[i];
+            r[i] -= alpha*u[i];
+        }
+
+        sum3 = 0.0; sum4 = 0.0;
+        for (i = 0; i < nn; i++) {
+            sum3 += r[i]*r[i];
+            sum4 += r[i]*u[i];
+        }
+
+        beta = sum2 != 0.0 ? -sum4/sum2 : 0.0;
+
+        for (i = 0; i < nn; i++) {
+            p[i] = r[i] + beta*p[i];
+        }
 
         k++;
     }
@@ -313,12 +304,13 @@ extern "C" int runCPUCG(int ne, int nn, int kmax, float errmin,
     free(dsum);
     free(rsum);
     free(r);
-    free(d);
-    free(q);
+    free(p);
+    free(u);
 
     return k;
 }
 
+// Sadiku's Numerical Techniques in Electromagnetics. pg.712
 extern "C" int testeCG(int n, int kmax, float err, float* A, float* x,
                        float* b) {
     int i, j, k = 1;
@@ -332,7 +324,7 @@ extern "C" int testeCG(int n, int kmax, float err, float* A, float* x,
         r[i] = b[i];
     }
 
-    while (k < kmax || sum3 > err) {
+    while (k < kmax && fabs(sqrt(sum3)) > err) {
         for (j = 0; j < n; j++) {
             u[j] = 0.0;
             for (i = 0; i < n; i++)
@@ -370,107 +362,6 @@ extern "C" int testeCG(int n, int kmax, float err, float* A, float* x,
     free(r);
     free(p);
     free(u);
-
-    return k;
-}
-
-extern "C" int testeCG2(int n, int kmax, float err, float* A, float* x,
-                        float* b) {
-    int i, j, k = 1;
-    float alpha, beta;
-    float rho, rho_n, dq;
-    float *r = (float*)malloc(n*sizeof(float));
-    float *d = (float*)malloc(n*sizeof(float));
-    float *q = (float*)malloc(n*sizeof(float));
-
-    for (i = 0; i < n; i++) {
-        r[i] = b[i];
-        d[i] = b[i];
-    }
-
-    rho_n = 0;
-    for (i = 0; i < n; i++)
-        rho_n += pow(r[i], 2);
-    rho = rho_n;
-
-    while (k < kmax && fabs(sqrt(rho_n)) > err) {
-        for (j = 0; j < n; j++) {
-            q[j] = 0.0;
-            for (i = 0; i < n; i++)
-                q[j] += A[i*n + j]*d[i];
-        }
-
-        dq = 0;
-        for (i = 0; i < n; i++)
-            dq += d[i]*q[i];
-        alpha = rho_n/dq;
-
-        for (i = 0; i < n; i++) {
-            x[i] = x[i] + alpha*d[i];
-            r[i] = r[i] - alpha*q[i];
-        }
-
-        rho = rho_n;
-        rho_n = 0;
-        for (i = 0; i < n; i++)
-            rho_n += pow(r[i], 2);
-
-        beta = rho_n/rho;
-
-        for (i = 0; i < n; i++) {
-            d[i] = r[i] + beta*d[i];
-        }
-
-        k++;
-    }
-
-    free(r);
-    free(d);
-    free(q);
-
-    return k;
-}
-
-extern "C" int testeSD(int n, int kmax, float err, float* A, float* x,
-                        float* b) {
-    int i, j, k = 1;
-    float rho, rq, alpha;
-    float *r = (float*)malloc(n*sizeof(float));
-    float *q = (float*)malloc(n*sizeof(float));
-
-    for (i = 0; i < n; i++)
-        r[i] = b[i];
-
-    rho = 0;
-    for (i = 0; i < n; i++)
-        rho += pow(r[i], 2);
-
-    while (k < kmax && fabs(rho) > err) {
-        for (j = 0; j < n; j++) {
-            q[j] = 0.0;
-            for (i = 0; i < n; i++)
-                q[j] += A[i*n + j]*r[i];
-        }
-
-        rq = 0;
-        for (i = 0; i < n; i++)
-            rq += r[i]*q[i];
-
-        alpha = rho/rq;
-
-        for (i = 0; i < n; i++) {
-            x[i] = x[i] + alpha*r[i];
-            r[i] = r[i] - alpha*q[i];
-        }
-
-        printf("\n ");
-        for (i = 0; i < n; i++) {
-            printf("%.4f ", r[i]);
-            rho += pow(r[i], 2);
-        }
-
-        k++;
-    }
 
     return k;
 }

@@ -17,6 +17,7 @@ for n in m.nodesOnLine([1, 2, 9, 10, 5]):
 alpha = 1E-5
 R = 0
 
-v, ic, bc = m.run(cuda=False, boundary=bound, alpha=alpha, R=R)
+vc, ic, bc = m.run(cuda=False, boundary=bound, alpha=alpha, R=R)
+vg, ig, bg = m.run(cuda=False, boundary=bound, alpha=alpha, R=R)
 
-m.plotResult(result=v)
+m.plotResult(result=vc-vg)

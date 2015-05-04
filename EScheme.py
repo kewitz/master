@@ -155,20 +155,22 @@ class Mesh(object):
         for i, e in enumerate(self.elements):
             elements[i] = e.ctyped
         # Get ctyped nodes.
+
         c_nodes = _node * nn
         nodes = c_nodes()
         for i, n in enumerate(self.nodes):
             nodes[i] = n.ctyped
+
         # Set up the boundary information.
         if 'boundary' in kwargs:
             for k in kwargs['boundary']:
                 for i in self.nodesOnLine(k, True):
                     V[i] = kwargs['boundary'][k]
+
         # Check if it's CUDA capable.
         iters = func(ne, nn, maxiter, c_float(errmin), elements, nodes,
                      byref(ctypeslib.as_ctypes(V)), self.verbose,
                      byref(ctypeslib.as_ctypes(bench)))
-
         return V, iters, bench.tolist()
 
     def nodesOnLine(self, tags, indexOnly=False):
