@@ -73,8 +73,6 @@ __global__ void kernel_iter(const int nn, const int k, const float alpha,
     c = fabsf(diff) > fabsf(Vi*alpha);
     atomicOr(conv, c);
     V[Node.i] = Vi;
-
-    return;
 }
 
 // Kernel de pre-processamento responsável por calcular as matrizes de contribu-
@@ -101,8 +99,6 @@ __global__ void kernel_pre(int ne, elementri *elements, node *nodes) {
     elements[i].matriz[3] = ((J2-J4)*J4 - (J3-J1)*J3)/dJ;       // C12 C21
     elements[i].matriz[4] = ((J2-J4)*-1*J2 + (J3-J1)*J1)/dJ;    // C13 C31
     elements[i].matriz[5] = (J4*-1*J2 - J3*J1)/dJ;              // C23 C32
-
-    return;
 }
 
 // Função externa que processa o problema, responsável por alocar a memória no

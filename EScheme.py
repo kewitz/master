@@ -97,7 +97,7 @@ class Element(object):
     def ctyped(self):
         """Retorna o Elemento em formato `Struct _elementri`."""
         r = _elementri()
-        r.eps = float32(self.eps)
+        r.eps = c_float(self.eps)
         for i, n in enumerate(self.nodes):
             r.nodes[i] = n.i
         return r
@@ -142,9 +142,9 @@ class Mesh(object):
         """Run simulation until converge to `alpha` residue."""
         if cuda:
             assert lib.getCUDAdevices() > 0, "No CUDA capable devices found."
-            func = lib.run
+            func = lib.runGPU
         else:
-            func = lib.runCPUCG
+            func = lib.runCPU
         ne, nn = len(self.elements), len(self.nodes)
         V = zeros(nn, dtype=float32)
         bench = zeros(3, dtype=float32)

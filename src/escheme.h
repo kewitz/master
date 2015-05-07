@@ -45,7 +45,6 @@ extern "C" void getInfo() {
     cudaDeviceProp prop;
     CudaSafeCall(cudaGetDeviceProperties(&prop, 0) );
     printf("[!] Device Name: %s\n", prop.name);
-    return;
 }
 
 extern "C" int getCUDAdevices() {
