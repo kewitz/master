@@ -91,7 +91,7 @@ __global__ void kernel_preprocess(int ne, elementri * elements, float * V,
 }
 
 // Kernel de pré-condicionamento.
-__global__ void kernel_precond(int nn, node * nodes, float * rsum, float * dsum,
+__global__ void kernel_precond(int nn, node * nodes, float * dsum, float * rsum,
                                float * R, float * P, float * V) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= nn) return;
@@ -101,7 +101,25 @@ __global__ void kernel_precond(int nn, node * nodes, float * rsum, float * dsum,
     P[i] = ri;
 }
 
-__global__ void kernel_iter_element(int ne) { }
+__global__ void kernel_iter_element(int ne, elementri * elements, float * u,
+                                    float * p) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= ne) return;
+
+    elementri E = elements[i];
+    int n1 = E.nodes[0], n2 = E.nodes[1], n3 = E.nodes[2];
+
+    u[n1] += E.matriz[0]*p[n1] + E.matriz[3]*p[n2] + E.matriz[4]*p[n3];
+    u[n2] += E.matriz[3]*p[n1] + E.matriz[1]*p[n2] + E.matriz[5]*p[n3];
+    u[n3] += E.matriz[4]*p[n1] + E.matriz[5]*p[n2] + E.matriz[2]*p[n3];
+}
+
+__global__ void kernel_util_zero(int size, float * vec) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= ne) return;
+
+    vec[i] = 0.0;
+}
 
 // Função externa que processa o problema na GPU.
 //    ne: número de elementos.
@@ -118,8 +136,8 @@ extern "C" int runGPU(int ne, int nn, int kmax, float errmin,
                       float *bench) {
     int i, k = 1;
     const dim3 threads(512);
-    const dim3 preblocks(1 + ne/512);
-    const dim3 iterblocks(1 + nn/512);
+    const dim3 elementblocks(1 + ne/512);
+    const dim3 nodeblocks(1 + nn/512);
 
     // Array Sizes
     size_t s_Elements = sizeof(elementri)*ne,
@@ -139,6 +157,18 @@ extern "C" int runGPU(int ne, int nn, int kmax, float errmin,
     CudaSafeCall(cudaMalloc(&_dsum, s_V));
     CudaSafeCall(cudaMalloc(&_rsum, s_V));
 
+    CudaSafeCall(cudaMemcpy(_elements, elements, s_Elements, cudaMemcpyHostToDevice));
+    CudaSafeCall(cudaMemcpy(_V, V, s_V, cudaMemcpyHostToDevice));
+    CudaSafeCall(cudaMemcpy(_nodes, nodes, s_Nodes, cudaMemcpyHostToDevice));
+
+    kernel_integration<<<elementblocks, threads>>>(ne, _elements, _nodes);
+    kernel_util_zero<<<nodeblocks, threads>>>(nn, _dsum);
+    kernel_util_zero<<<nodeblocks, threads>>>(nn, _rsum);
+    cudaDeviceSynchronize();
+    kernel_preprocess<<<elementblocks, threads>>>(ne, _elements, _V, _dsum, _rsum);
+    cudaDeviceSynchronize();
+    kernel_precond<<<nodeblocks, threads>>>(nn, _nodes, _dsum, _nsum, _R, _P, _V);
+
     return k;
 }
 
@@ -156,14 +186,6 @@ extern "C" int runCPU(int ne, int nn, int kmax, float errmin,
                       elementri *elements, node *nodes, float *V, bool verbose,
                       float *bench) {
     int i, k;
-    float *rsum = (float*)malloc(nn*sizeof(float));
-    float *dsum = (float*)malloc(nn*sizeof(float));
-
-    // Inicialização dos vetores.
-    for (i = 0; i < nn; i++) {
-        rsum[i] = 0.0;
-        dsum[i] = 0.0;
-    }
 
     // Pre-processamento. Calcula as matrizes de contribuição dos elementos.
     float J1, J2, J3, J4, dJ;
@@ -195,8 +217,15 @@ extern "C" int runCPU(int ne, int nn, int kmax, float errmin,
             (J4*-1*J2 - J3*J1)/dJ : 0.0;
     }
 
-    // Calcula dsum e rsum.
+    // Pre-processamento. Calcula dsum e rsum.
     int n1, n2, n3;
+    float *rsum = (float*)malloc(nn*sizeof(float));
+    float *dsum = (float*)malloc(nn*sizeof(float));
+    // Inicialização dos vetores.
+    for (i = 0; i < nn; i++) {
+        rsum[i] = 0.0;
+        dsum[i] = 0.0;
+    }
     for (i = 0; i < ne; i++) {
         E = elements[i];
         n1 = E.nodes[0]; n2 = E.nodes[1]; n3 = E.nodes[2];
@@ -216,6 +245,7 @@ extern "C" int runCPU(int ne, int nn, int kmax, float errmin,
     float *p = (float*)malloc(nn*sizeof(float));
     float *u = (float*)malloc(nn*sizeof(float));
 
+    // Pré-condicionamento.
     for (i = 0; i < nn; i++) {
         ri = nodes[i].calc ? rsum[i] - dsum[i]*V[i] : 0.0;
         p[i] = ri;
