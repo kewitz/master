@@ -16,7 +16,7 @@ for n in m.nodesOnLine([1, 2, 9, 10, 5]):
 
 errmin = 1E-8
 
-vc, ic, bc = m.run(cuda=False, boundary=bound, errmin=errmin, maxiter=1000)
+vc, ic, bc = m.run(cuda=True, boundary=bound, errmin=errmin, maxiter=1000)
 print "Took %i iterations." % (ic)
 
 m.plotResult(result=vc)

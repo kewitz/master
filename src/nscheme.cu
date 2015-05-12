@@ -28,8 +28,8 @@
 #include <time.h>
 #include <cuda.h>
 #include <cuda_runtime.h>
-#include "cuda_snippets.h"
-#include "nscheme.h"
+#include "./cuda_snippets.h"
+#include "./nscheme.h"
 
 
 // Kernel responsável por uma iteração.
