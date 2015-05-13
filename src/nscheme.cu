@@ -33,8 +33,8 @@
 
 
 // Kernel responsável por uma iteração.
-__global__ void kernel_iter(const int nn, const int k, const float alpha,
-                            float R, elementri *elements, node *nodes, float *V,
+__global__ void kernel_iter(const int nn, const int k, const float errmin,
+                            elementri *elements, node *nodes, float *V,
                             int *conv) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= nn) return;
@@ -65,12 +65,10 @@ __global__ void kernel_iter(const int nn, const int k, const float alpha,
         }
     }
 
-    Vi = diag_sum == 0 ? 0.0 : fdividef(right_sum*Element.eps,
-                                        diag_sum*Element.eps);
+    Vi = diag_sum == 0 ? 0.0 : fdividef(right_sum, diag_sum);
     Vo = V[Node.i];
     diff = Vi - Vo;
-    Vi = fmaf(R, diff, Vi);
-    c = fabsf(diff) > fabsf(Vi*alpha);
+    c = fabs(diff) > errmin;
     atomicOr(conv, c);
     V[Node.i] = Vi;
 }
@@ -86,16 +84,16 @@ __global__ void kernel_pre(int ne, elementri *elements, node *nodes) {
 
     // Calcula argumentos necessários
     float J1, J2, J3, J4, dJ;
-    J1 = (float)N2.x - (float)N1.x;
-    J2 = (float)N2.y - (float)N1.y;
-    J3 = (float)N3.x - (float)N1.x;
-    J4 = (float)N3.y - (float)N1.y;
+    J1 = N2.x - N1.x;
+    J2 = N2.y - N1.y;
+    J3 = N3.x - N1.x;
+    J4 = N3.y - N1.y;
     dJ = 2*(J1*J4 - J3*J2);
 
     // Calcula a matriz de contribuições do elemento.
-    elements[i].matriz[0] = (pow(J2-J4,2) + pow(J3-J1,2))/dJ;   // C11
-    elements[i].matriz[1] = (pow(J4,2) + pow(J3,2))/dJ;         // C22
-    elements[i].matriz[2] = (pow(J2,2) + pow(J1,2))/dJ;         // C33
+    elements[i].matriz[0] = (pow(J2-J4, 2) + pow(J3-J1, 2))/dJ;   // C11
+    elements[i].matriz[1] = (pow(J4, 2) + pow(J3, 2))/dJ;         // C22
+    elements[i].matriz[2] = (pow(J2, 2) + pow(J1, 2))/dJ;         // C33
     elements[i].matriz[3] = ((J2-J4)*J4 - (J3-J1)*J3)/dJ;       // C12 C21
     elements[i].matriz[4] = ((J2-J4)*-1*J2 + (J3-J1)*J1)/dJ;    // C13 C31
     elements[i].matriz[5] = (J4*-1*J2 - J3*J1)/dJ;              // C23 C32
@@ -103,13 +101,12 @@ __global__ void kernel_pre(int ne, elementri *elements, node *nodes) {
 
 // Função externa que processa o problema, responsável por alocar a memória no
 // device e invocar todas os kernels necessários.
-extern "C" int run(const int ne, const int nn, const float alpha,
-                   const float Rf, const float T, elementri *elements,
+extern "C" int run(const int ne, const int nn, const int kmax,
+                   const float errmin, elementri *elements,
                    node *nodes, float *V, bool verbose, float *bench) {
     clock_t t;
     int k = 1, conv, *d_conv;
     float *d_V;
-    float R;
     node *d_nodes;
     elementri *d_elements;
     const dim3 threads(512);
@@ -149,11 +146,10 @@ extern "C" int run(const int ne, const int nn, const float alpha,
     // Iterações
     t = clock();
     conv = 1;
-    while (conv == 1) {
+    while (conv == 1 && k < kmax) {
         conv = 0;
-        R = Rf*(1-expf(-k/T));
         cudaMemcpy(d_conv, &conv, sizeof(int), cudaMemcpyHostToDevice);
-        kernel_iter<<<iterblocks, threads>>>(nn, k, alpha, R, d_elements,
+        kernel_iter<<<iterblocks, threads>>>(nn, k, errmin, d_elements,
                                              d_nodes, d_V, d_conv);
         cudaDeviceSynchronize();
         cudaMemcpy(&conv, d_conv, sizeof(int), cudaMemcpyDeviceToHost);
@@ -177,11 +173,10 @@ extern "C" int run(const int ne, const int nn, const float alpha,
 }
 
 // Função externa que processa o problema no CPU.
-extern "C" int runCPU(int ne, int nn, float alpha, float Rf, float T,
+extern "C" int runCPU(int ne, int nn, int kmax, float errmin,
                       elementri *elements, node *nodes, float *V, bool verbose,
                       float *bench) {
-    int i, k = 0;
-    float R;
+    int i, k = 1;
     clock_t t;
 
     float *Vos = (float*) malloc(nn*sizeof(float));
@@ -219,9 +214,8 @@ extern "C" int runCPU(int ne, int nn, float alpha, float Rf, float T,
     t = clock();
     float diff;
     bool run = true;
-    while (run) {
+    while (run && k < kmax) {
         run = false;
-        R = Rf*(1-expf(-k/T));
         for (i = 0; i < nn; i++) {
             int e;
             float diag_sum = 0.0, right_sum = 0.0, Vi, Vo;
@@ -249,8 +243,7 @@ extern "C" int runCPU(int ne, int nn, float alpha, float Rf, float T,
                 }
                 Vi = diag_sum == 0 ? 0.0 : right_sum/diag_sum;
                 diff = Vi - Vo;
-                Vi += R*diff;
-                run |= fabs(diff) > fabs(Vi*alpha);
+                run |= fabs(diff) > errmin;
                 V[Node.i] = Vi;
             }
         }

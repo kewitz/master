@@ -115,9 +115,12 @@ __global__ void kernel_iter_element(int ne, elementri * elements, float * u,
     elementri E = elements[i];
     int n1 = E.nodes[0], n2 = E.nodes[1], n3 = E.nodes[2];
 
-    atomicAdd(&u[n1], E.matriz[0]*p[n1] + E.matriz[3]*p[n2] + E.matriz[4]*p[n3]);
-    atomicAdd(&u[n2], E.matriz[3]*p[n1] + E.matriz[1]*p[n2] + E.matriz[5]*p[n3]);
-    atomicAdd(&u[n3], E.matriz[4]*p[n1] + E.matriz[5]*p[n2] + E.matriz[2]*p[n3]);
+    atomicAdd(&u[n1], E.matriz[0]*p[n1] + E.matriz[3]*p[n2] +
+              E.matriz[4]*p[n3]);
+    atomicAdd(&u[n2], E.matriz[3]*p[n1] + E.matriz[1]*p[n2] +
+              E.matriz[5]*p[n3]);
+    atomicAdd(&u[n3], E.matriz[4]*p[n1] + E.matriz[5]*p[n2] +
+              E.matriz[2]*p[n3]);
 }
 
 __global__ void kernel_iter_element_fix(int nn, node *nodes, float *u,
@@ -129,6 +132,7 @@ __global__ void kernel_iter_element_fix(int nn, node *nodes, float *u,
         u[i] = p[i];
 }
 
+// vec[i] = 0.0f
 __global__ void kernel_util_zero(int size, float *vec) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= size) return;

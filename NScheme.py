@@ -32,6 +32,7 @@ import matplotlib.tri as tri
 
 # Importa a biblioteca CUDA.
 lib = cdll.LoadLibrary('./nscheme.so')
+lib.hello()
 #assert lib.getCUDAdevices() > 0, "No CUDA capable devices found."
 
 eps = 8.854187E-12
@@ -143,7 +144,7 @@ class Mesh(object):
     def __sizeof__(self):
         return sys.getsizeof(self.elements) + sys.getsizeof(self.nodes)
 
-    def run(self, alpha=1E-5, R=0.0, T=14.11, cuda=False, **kwargs):
+    def run(self, errmin=1E-5, kmax=10000, cuda=False, **kwargs):
         """Run simulation until converge to `alpha` residue."""
         if cuda:
             assert lib.getCUDAdevices() > 0, "No CUDA capable devices found."
@@ -170,7 +171,7 @@ class Mesh(object):
                 for i in self.nodesOnLine(k, True):
                     V[i] = kwargs['boundary'][k]
         # Check if it's CUDA capable.
-        iters = func(ne, nn, c_float(alpha), c_float(R), c_float(T), elements,
+        iters = func(ne, nn, kmax, c_float(errmin), elements,
                      nodes, byref(ctypeslib.as_ctypes(V)), self.verbose,
                      byref(ctypeslib.as_ctypes(bench)))
 

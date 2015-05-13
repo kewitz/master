@@ -43,12 +43,14 @@ __global__ void kernel_iter();
 extern "C" void teste_Arrays(int, int, elementri *, node *);
 
 // Snippets
+extern "C" void hello() {
+    printf("[!] %s compiled in %s %s\n", __FILE__, __DATE__, __TIME__);
+}
+
 extern "C" void getInfo() {
     cudaDeviceProp prop;
     CudaSafeCall(cudaGetDeviceProperties(&prop, 0) );
     printf("[!] Device Name: %s\n", prop.name);
-    printf("[!] %s compiled in %s %s\n", __FILE__, __DATE__, __TIME__);
-    return;
 }
 
 extern "C" int getCUDAdevices() {
