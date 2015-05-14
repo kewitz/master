@@ -55,7 +55,7 @@ __global__ void kernel_iter(const int nn, const int k, const float errmin,
         }
         if (Node.i == Element.nodes[1]) {
             diag_sum += Element.matriz[1];
-            right_sum -= Element.matriz[3]*V[Element.nodes[1]];
+            right_sum -= Element.matriz[3]*V[Element.nodes[0]];
             right_sum -= Element.matriz[5]*V[Element.nodes[2]];
         }
         if (Node.i == Element.nodes[2]) {
@@ -222,28 +222,28 @@ extern "C" int runCPU(int ne, int nn, int kmax, float errmin,
             node Node = nodes[i];
             if (Node.calc == true) {
                 Vo = V[Node.i];
-                elementri Element;
+                elementri E;
                 for (e = 0; e < Node.ne; e++) {
-                    Element = elements[Node.elements[e]];
-                    if (Node.i == Element.nodes[0]) {
-                        diag_sum  += Element.matriz[0];
-                        right_sum -= Element.matriz[3]*Vos[Element.nodes[1]];
-                        right_sum -= Element.matriz[4]*Vos[Element.nodes[2]];
+                    E = elements[Node.elements[e]];
+                    if (Node.i == E.nodes[0]) {
+                        diag_sum  += E.matriz[0];
+                        right_sum -= E.matriz[3]*Vos[E.nodes[1]];
+                        right_sum -= E.matriz[4]*Vos[E.nodes[2]];
                     }
-                    if (Node.i == Element.nodes[1]) {
-                        diag_sum += Element.matriz[1];
-                        right_sum -= Element.matriz[3]*Vos[Element.nodes[1]];
-                        right_sum -= Element.matriz[5]*Vos[Element.nodes[2]];
+                    if (Node.i == E.nodes[1]) {
+                        diag_sum += E.matriz[1];
+                        right_sum -= E.matriz[3]*Vos[E.nodes[0]];
+                        right_sum -= E.matriz[5]*Vos[E.nodes[2]];
                     }
-                    if (Node.i == Element.nodes[2]) {
-                        diag_sum += Element.matriz[2];
-                        right_sum -= Element.matriz[4]*Vos[Element.nodes[0]];
-                        right_sum -= Element.matriz[5]*Vos[Element.nodes[1]];
+                    if (Node.i == E.nodes[2]) {
+                        diag_sum += E.matriz[2];
+                        right_sum -= E.matriz[4]*Vos[E.nodes[0]];
+                        right_sum -= E.matriz[5]*Vos[E.nodes[1]];
                     }
                 }
                 Vi = diag_sum == 0 ? 0.0 : right_sum/diag_sum;
                 diff = Vi - Vo;
-                run |= fabs(diff) > errmin;
+                run |= fabs(diff) > errmin*fabs(Vi);
                 V[Node.i] = Vi;
             }
         }
