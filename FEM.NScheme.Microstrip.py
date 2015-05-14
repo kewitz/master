@@ -14,6 +14,6 @@ for e in m.elementsByTag([12]):
 for n in m.nodesOnLine([1, 2, 9, 10, 5]):
     n.calc = False
 
-vg, ig, bg = m.run(cuda=True, boundary=bound, errmin=1E-5, kmax=10000)
+vg, ig, bg = m.run(cuda=True, boundary=bound, errmin=1E-6, kmax=10000)
 
 m.plotResult(result=vg)

@@ -191,16 +191,16 @@ extern "C" int runCPU(int ne, int nn, int kmax, float errmin,
 
         // Calcula argumentos necessários
         float J1, J2, J3, J4, dJ;
-        J1 = (float)N2.x - (float)N1.x;
-        J2 = (float)N2.y - (float)N1.y;
-        J3 = (float)N3.x - (float)N1.x;
-        J4 = (float)N3.y - (float)N1.y;
+        J1 = N2.x - N1.x;
+        J2 = N2.y - N1.y;
+        J3 = N3.x - N1.x;
+        J4 = N3.y - N1.y;
         dJ = 2*(J1*J4 - J3*J2);
 
         // Calcula a matriz de contribuições do elemento.
-        elements[i].matriz[0] = (pow(J2-J4,2) + pow(J3-J1,2))/dJ;   // C11
-        elements[i].matriz[1] = (pow(J4,2) + pow(J3,2))/dJ;         // C22
-        elements[i].matriz[2] = (pow(J2,2) + pow(J1,2))/dJ;         // C33
+        elements[i].matriz[0] = (pow(J2-J4, 2) + pow(J3-J1, 2))/dJ;   // C11
+        elements[i].matriz[1] = (pow(J4, 2) + pow(J3, 2))/dJ;         // C22
+        elements[i].matriz[2] = (pow(J2, 2) + pow(J1, 2))/dJ;         // C33
         elements[i].matriz[3] = ((J2-J4)*J4 - (J3-J1)*J3)/dJ;       // C12 C21
         elements[i].matriz[4] = ((J2-J4)*-1*J2 + (J3-J1)*J1)/dJ;    // C13 C31
         elements[i].matriz[5] = (J4*-1*J2 - J3*J1)/dJ;              // C23 C32
