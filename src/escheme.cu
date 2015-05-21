@@ -35,7 +35,7 @@ SOFTWARE.
 #define smemcpy(a, b, c, d) CudaSafeCall(cudaMemcpy(a, b, c, d))
 #define putf(a, b) smemcpy(a, b, sizeof(float), cudaMemcpyHostToDevice);
 #define getf(a, b) smemcpy(a, b, sizeof(float), cudaMemcpyDeviceToHost);
-#define BSIZE 256
+#define BSIZE 512
 
 // Kernel de pré-processamento responsável por calcular as matrizes de contribu-
 // ição de todos os elementos.
@@ -204,25 +204,18 @@ extern "C" int runGPU(int ne, int nn, int kmax, float errmin,
            s_V = sizeof(float)*nn;
 
     // Scalars.
-    float sum1 = 0.0f, sum2 = 0.0f, sum3 = 1.0f, sum4 = 0.0f,
-          alpha = 0.0f, beta = 0.0f,
-          *_sum1, *_sum2, *_sum3, *_sum4;
+    float sum1 = 0.0f, sum2 = 0.0f, sum3 = 1.0f, sum4 = 0.0f, alpha = 0.0f,
+          beta = 0.0f, *_sum1, *_sum2, *_sum3, *_sum4;
+
     // Device Arrays.
     float *_dsum, *_rsum, *_V, *_U, *_P, *_R;
     node *_nodes;
     elementri *_elements;
-    smalloc(&_elements, s_Elements);
-    smalloc(&_nodes, s_Nodes);
-    smalloc(&_V, s_V);
-    smalloc(&_U, s_V);
-    smalloc(&_P, s_V);
-    smalloc(&_R, s_V);
-    smalloc(&_dsum, s_V);
-    smalloc(&_rsum, s_V);
-    smalloc(&_sum1, sizeof(float));
-    smalloc(&_sum2, sizeof(float));
-    smalloc(&_sum3, sizeof(float));
-    smalloc(&_sum4, sizeof(float));
+    smalloc(&_dsum, s_V); smalloc(&_rsum, s_V);
+    smalloc(&_elements, s_Elements); smalloc(&_nodes, s_Nodes);
+    smalloc(&_sum1, sizeof(float)); smalloc(&_sum2, sizeof(float));
+    smalloc(&_sum3, sizeof(float)); smalloc(&_sum4, sizeof(float));
+    smalloc(&_V, s_V); smalloc(&_U, s_V); smalloc(&_P, s_V); smalloc(&_R, s_V);
 
     smemcpy(_elements, elements, s_Elements, cudaMemcpyHostToDevice);
     smemcpy(_V, V, s_V, cudaMemcpyHostToDevice);
@@ -274,18 +267,10 @@ extern "C" int runGPU(int ne, int nn, int kmax, float errmin,
     }
     smemcpy(V, _V, s_V, cudaMemcpyDeviceToHost);
 
-    cudaFree(_elements);
-    cudaFree(_nodes);
-    cudaFree(_V);
-    cudaFree(_U);
-    cudaFree(_P);
-    cudaFree(_R);
-    cudaFree(_dsum);
-    cudaFree(_rsum);
-    cudaFree(_sum1);
-    cudaFree(_sum2);
-    cudaFree(_sum3);
-    cudaFree(_sum4);
+    cudaFree(_sum1); cudaFree(_sum2); cudaFree(_sum3); cudaFree(_sum4);
+    cudaFree(_V); cudaFree(_U); cudaFree(_P); cudaFree(_R);
+    cudaFree(_elements); cudaFree(_nodes);
+    cudaFree(_dsum); cudaFree(_rsum);
 
     return k;
 }

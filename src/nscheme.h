@@ -23,7 +23,7 @@
  */
 
 typedef struct {
-    int nodes[3];
+    unsigned int nodes[3];
     float matriz[6]; // C11 C22 C33 C12 C13 C23
     float eps;
 } elementri;
@@ -31,10 +31,10 @@ typedef struct {
 typedef struct {
     float x;
     float y;
-    int i;
+    unsigned int i;
     bool calc;
-    int ne;
-    int elements[10];
+    unsigned int ne;
+    unsigned int elements[10];
 } node;
 
 // HEADER
@@ -44,7 +44,7 @@ extern "C" void teste_Arrays(int, int, elementri *, node *);
 
 // Snippets
 extern "C" void hello() {
-    printf("[!] %s compiled in %s %s\n", __FILE__, __DATE__, __TIME__);
+    printf("[!] Compiled in %s %s\n", __DATE__, __TIME__);
 }
 
 extern "C" void getInfo() {

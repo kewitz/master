@@ -47,15 +47,15 @@ class _node(Structure):
     """Struct `node` utilizada pelo programa C."""
     _fields_ = [("x", c_float),
                 ("y", c_float),
-                ("i", c_int),
+                ("i", c_uint),
                 ("calc", c_bool),
-                ("ne", c_int),
-                ("elements", c_int*10)]
+                ("ne", c_uint),
+                ("elements", c_uint*10)]
 
 
 class _elementri(Structure):
     """Struct `element` utilizada pelo programa C."""
-    _fields_ = [("nodes", c_int*3),
+    _fields_ = [("nodes", c_uint*3),
                 ("matriz", c_float*6),
                 ("eps", c_float)]
 
@@ -144,11 +144,11 @@ class Mesh(object):
     def __sizeof__(self):
         return sys.getsizeof(self.elements) + sys.getsizeof(self.nodes)
 
-    def run(self, errmin=1E-5, kmax=10000, cuda=False, **kwargs):
+    def run(self, R=0, errmin=1E-5, kmax=10000, cuda=False, **kwargs):
         """Run simulation until converge to `alpha` residue."""
         if cuda:
             assert lib.getCUDAdevices() > 0, "No CUDA capable devices found."
-            func = lib.run
+            func = lib.runGPU
         else:
             func = lib.runCPU
         ne, nn = len(self.elements), len(self.nodes)
@@ -171,7 +171,7 @@ class Mesh(object):
                 for i in self.nodesOnLine(k, True):
                     V[i] = kwargs['boundary'][k]
         # Check if it's CUDA capable.
-        iters = func(ne, nn, kmax, c_float(errmin), elements,
+        iters = func(ne, nn, kmax, c_float(R), c_float(errmin), elements,
                      nodes, byref(ctypeslib.as_ctypes(V)), self.verbose,
                      byref(ctypeslib.as_ctypes(bench)))
 

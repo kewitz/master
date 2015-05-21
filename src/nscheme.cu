@@ -33,9 +33,9 @@
 
 
 // Kernel responsável por uma iteração.
-__global__ void kernel_iter(const int nn, const int k, const float errmin,
-                            elementri *elements, node *nodes, float *V,
-                            int *conv) {
+__global__ void kernel_iter(const int nn, const int k, const float R,
+    const float errmin, elementri *elements, node *nodes, float *V, int *conv) {
+
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= nn) return;
 
@@ -68,6 +68,7 @@ __global__ void kernel_iter(const int nn, const int k, const float errmin,
     Vi = diag_sum == 0 ? 0.0 : fdividef(right_sum, diag_sum);
     Vo = V[Node.i];
     diff = Vi - Vo;
+    Vi = fmaf(R, diff, Vi);
     c = fabs(diff) > errmin;
     atomicOr(conv, c);
     V[Node.i] = Vi;
@@ -101,7 +102,7 @@ __global__ void kernel_pre(int ne, elementri *elements, node *nodes) {
 
 // Função externa que processa o problema, responsável por alocar a memória no
 // device e invocar todas os kernels necessários.
-extern "C" int run(const int ne, const int nn, const int kmax,
+extern "C" int runGPU(const int ne, const int nn, const int kmax, const float R,
                    const float errmin, elementri *elements,
                    node *nodes, float *V, bool verbose, float *bench) {
     clock_t t;
@@ -149,7 +150,7 @@ extern "C" int run(const int ne, const int nn, const int kmax,
     while (conv == 1 && k < kmax) {
         conv = 0;
         cudaMemcpy(d_conv, &conv, sizeof(int), cudaMemcpyHostToDevice);
-        kernel_iter<<<iterblocks, threads>>>(nn, k, errmin, d_elements,
+        kernel_iter<<<iterblocks, threads>>>(nn, k, R, errmin, d_elements,
                                              d_nodes, d_V, d_conv);
         cudaDeviceSynchronize();
         cudaMemcpy(&conv, d_conv, sizeof(int), cudaMemcpyDeviceToHost);
@@ -164,23 +165,17 @@ extern "C" int run(const int ne, const int nn, const int kmax,
     CudaSafeCall(cudaMemcpy(V, d_V, s_V, cudaMemcpyDeviceToHost));
     cudaDeviceSynchronize();
 
-    cudaFree(d_V);
-    cudaFree(d_nodes);
-    cudaFree(d_elements);
-    cudaFree(d_conv);
+    cudaFree(d_V); cudaFree(d_nodes); cudaFree(d_elements); cudaFree(d_conv);
 
     return k;
 }
 
 // Função externa que processa o problema no CPU.
-extern "C" int runCPU(int ne, int nn, int kmax, float errmin,
+extern "C" int runCPU(int ne, int nn, int kmax, float R, float errmin,
                       elementri *elements, node *nodes, float *V, bool verbose,
                       float *bench) {
     int i, k = 1;
     clock_t t;
-
-    float *Vos = (float*) malloc(nn*sizeof(float));
-    memcpy(Vos, V, nn*sizeof(float));
 
     // Pre-processamento. Calcula as matrizes de contribuição dos elementos.
     t = clock();
@@ -227,29 +222,26 @@ extern "C" int runCPU(int ne, int nn, int kmax, float errmin,
                     E = elements[Node.elements[e]];
                     if (Node.i == E.nodes[0]) {
                         diag_sum  += E.matriz[0];
-                        right_sum -= E.matriz[3]*Vos[E.nodes[1]];
-                        right_sum -= E.matriz[4]*Vos[E.nodes[2]];
+                        right_sum -= E.matriz[3]*V[E.nodes[1]];
+                        right_sum -= E.matriz[4]*V[E.nodes[2]];
                     }
                     if (Node.i == E.nodes[1]) {
                         diag_sum += E.matriz[1];
-                        right_sum -= E.matriz[3]*Vos[E.nodes[0]];
-                        right_sum -= E.matriz[5]*Vos[E.nodes[2]];
+                        right_sum -= E.matriz[3]*V[E.nodes[0]];
+                        right_sum -= E.matriz[5]*V[E.nodes[2]];
                     }
                     if (Node.i == E.nodes[2]) {
                         diag_sum += E.matriz[2];
-                        right_sum -= E.matriz[4]*Vos[E.nodes[0]];
-                        right_sum -= E.matriz[5]*Vos[E.nodes[1]];
+                        right_sum -= E.matriz[4]*V[E.nodes[0]];
+                        right_sum -= E.matriz[5]*V[E.nodes[1]];
                     }
                 }
                 Vi = diag_sum == 0 ? 0.0 : right_sum/diag_sum;
                 diff = Vi - Vo;
+                Vi += R*diff;
                 run |= fabs(diff) > errmin*fabs(Vi);
                 V[Node.i] = Vi;
             }
-        }
-        for (i = 0; i < nn; i++) {
-            node Node = nodes[i];
-            Vos[Node.i] = V[Node.i];
         }
 
         k++;
@@ -261,44 +253,4 @@ extern "C" int runCPU(int ne, int nn, int kmax, float errmin,
     bench[1] = ((float)t)/CLOCKS_PER_SEC;
 
     return k;
-}
-
-extern "C" void teste_Arrays(int ne, int nn, elementri *elements, node *nodes) {
-    int i, k;
-    printf("\nStarting Node Test...\n\n");
-    for (i = 0; i < nn; i++) {
-        if (i%100 == 0) {
-            printf("\tNode %i (%.3f, %.3f):\n", i, nodes[i].x, nodes[i].y);
-            printf("\t\tElements:");
-            for (k = 0; k < nodes[i].ne; k++) {
-                printf(" %i", (int)nodes[i].elements[k]);
-            }
-            printf("\n");
-        }
-    }
-
-    printf("\nStarting Elements Test...\n\n");
-    for (i = 0; i < nn; i++) {
-        if (i%100 == 0) {
-            printf("\tElement %i:\n", i);
-            printf("\t\tNodes:");
-            for (k = 0; k < 3; k++) {
-                printf(" %i", elements[i].nodes[k]);
-            }
-            printf("\n\t\tMatriz:");
-            printf("\n\t\t\t%.3f %.3f %.3f",
-                   elements[i].matriz[0],
-                   elements[i].matriz[3],
-                   elements[i].matriz[4]);
-            printf("\n\t\t\t%.3f %.3f %.3f",
-                   elements[i].matriz[3],
-                   elements[i].matriz[1],
-                   elements[i].matriz[5]);
-            printf("\n\t\t\t%.3f %.3f %.3f",
-                   elements[i].matriz[4],
-                   elements[i].matriz[5],
-                   elements[i].matriz[2]);
-            printf("\n");
-        }
-    }
 }
