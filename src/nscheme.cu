@@ -254,3 +254,14 @@ extern "C" int runCPU(int ne, int nn, int kmax, float R, float errmin,
 
     return k;
 }
+
+extern "C" void test_colors(int numcolors, color *colors) {
+    for (unsigned int i = 0; i < numcolors; i++) {
+        color c = colors[i];
+        printf("Color %i have %i nodes:\n", i, c.len);
+        for (unsigned int j = 0; j < c.len; j++) {
+            printf(" %i,", c.nodes[j]);
+        }
+        printf("\n\n");
+    }
+}

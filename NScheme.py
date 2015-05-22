@@ -60,6 +60,12 @@ class _elementri(Structure):
                 ("eps", c_float)]
 
 
+class _color(Structure):
+    """Struct `color` utilizada pelo programa C."""
+    _fields_ = [("len", c_uint),
+                ("nodes", POINTER(c_uint))]
+
+
 class Node(object):
     """Classe do nó."""
     def __init__(self, *args):
@@ -170,7 +176,16 @@ class Mesh(object):
             for k in kwargs['boundary']:
                 for i in self.nodesOnLine(k, True):
                     V[i] = kwargs['boundary'][k]
-        # Check if it's CUDA capable.
+        # Set up colors.
+        colors = m.coloring()
+        c_color = ns._color * len(colors)
+        ccolors = c_color()
+        ccs = []
+        for i, co in enumerate(colors):
+            cs = array(co, dtype=uint32)
+            ccs.append(cs)
+            ccolors[i] = ns._color(c_uint(len(co)), ctypeslib.as_ctypes(ccs[i]))
+
         iters = func(ne, nn, kmax, c_float(R), c_float(errmin), elements,
                      nodes, byref(ctypeslib.as_ctypes(V)), self.verbose,
                      byref(ctypeslib.as_ctypes(bench)))
@@ -189,6 +204,32 @@ class Mesh(object):
         if indexOnly:
             r = [n.i for n in r]
         return list(set(r))
+
+    def coloring(self):
+        colors = []
+        mapped = []
+
+        nodes = filter(lambda n: n.calc is False, self.nodes)
+
+        while len(nodes) != 0:
+            nodes = list(set(nodes).difference(mapped))
+            mapped = mapped + nodes
+
+            ids = [n.i for n in nodes]
+            if len(ids) != 0:
+                colors.append(ids)
+
+            elements = []
+            for n in [n.elements for n in nodes]:
+                elements = elements + n
+            elements = [self.elements[i] for i in list(set(elements))]
+
+            nodes = []
+            for e in elements:
+                nodes = nodes + e.nodes
+
+        assert sum([len(c) for c in colors]) == len(self.nodes)
+        return colors
 
     def elementsByTag(self, tags):
         """Return elements tagged by `tag`."""
