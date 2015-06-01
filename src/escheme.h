@@ -38,7 +38,7 @@ typedef struct {
 
 // Snippets
 extern "C" void hello() {
-    printf("[!] %s compiled in %s %s\n", __FILE__, __DATE__, __TIME__);
+    printf("[!] Compiled in %s %s\n", __DATE__, __TIME__);
 }
 
 extern "C" void getInfo() {

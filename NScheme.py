@@ -42,6 +42,11 @@ def timeit(t=False):
     """Função cronômetro."""
     return time.time() - t if t else time.time()
 
+def split(array, limit):
+    r = []
+    for i in range(1+len(array)/limit):
+        r.append(array[limit*i:limit*(i+1)])
+    return r
 
 class _node(Structure):
     """Struct `node` utilizada pelo programa C."""
@@ -150,17 +155,18 @@ class Mesh(object):
     def __sizeof__(self):
         return sys.getsizeof(self.elements) + sys.getsizeof(self.nodes)
 
-    def run(self, R=0, errmin=1E-5, kmax=10000, cuda=False, **kwargs):
+    def run(self, R=0, errmin=1E-5, kmax=10000, cuda=False, color=True, **kwargs):
         """Run simulation until converge to `alpha` residue."""
+        # Assertions and function setting.
         if cuda:
             assert lib.getCUDAdevices() > 0, "No CUDA capable devices found."
             func = lib.runGPU
         else:
-            func = lib.runCPU
+            func = lib.runCPUColor
+        # Set up constants and other variables.
         ne, nn = len(self.elements), len(self.nodes)
         V = zeros(nn, dtype=float32)
         bench = zeros(3, dtype=float32)
-
         # Get ctyped elements.
         c_elements = _elementri * ne
         elements = c_elements()
@@ -177,18 +183,19 @@ class Mesh(object):
                 for i in self.nodesOnLine(k, True):
                     V[i] = kwargs['boundary'][k]
         # Set up colors.
-        colors = m.coloring()
-        c_color = ns._color * len(colors)
+        colors = self.coloring(color)
+        nc = len(colors)
+        c_color = _color * nc
         ccolors = c_color()
         ccs = []
         for i, co in enumerate(colors):
             cs = array(co, dtype=uint32)
             ccs.append(cs)
-            ccolors[i] = ns._color(c_uint(len(co)), ctypeslib.as_ctypes(ccs[i]))
-
-        iters = func(ne, nn, kmax, c_float(R), c_float(errmin), elements,
-                     nodes, byref(ctypeslib.as_ctypes(V)), self.verbose,
-                     byref(ctypeslib.as_ctypes(bench)))
+            ccolors[i] = _color(c_uint(len(co)), ctypeslib.as_ctypes(ccs[i]))
+        # Call function.
+        iters = func(ne, nn, nc, kmax, c_float(R), c_float(errmin), elements,
+                     nodes, ccolors, byref(ctypeslib.as_ctypes(V)),
+                     self.verbose, byref(ctypeslib.as_ctypes(bench)))
 
         return V, iters, bench.tolist()
 
@@ -205,30 +212,43 @@ class Mesh(object):
             r = [n.i for n in r]
         return list(set(r))
 
-    def coloring(self):
+    def coloring(self, limit = 0):
+        """
+        Return an array of `colors`.
+        """
         colors = []
         mapped = []
+        
+        if limit is False:
+            colors.append([n.i for n in self.nodes if n.calc is False])
+            colors.append([n.i for n in self.nodes if n.calc is True])
+            return colors
 
         nodes = filter(lambda n: n.calc is False, self.nodes)
-
         while len(nodes) != 0:
-            nodes = list(set(nodes).difference(mapped))
             mapped = mapped + nodes
-
-            ids = [n.i for n in nodes]
-            if len(ids) != 0:
-                colors.append(ids)
+            
+            if len(nodes) > 0:
+                ids = [n.i for n in nodes]
+                if limit is not True and limit > 0:
+                    ids = split(ids, limit)
+                else:
+                    ids = [ids]
+                for i in ids:
+                    colors.append(i)
 
             elements = []
-            for n in [n.elements for n in nodes]:
-                elements = elements + n
+            for e in [n.elements for n in nodes]:
+                elements = elements + e
             elements = [self.elements[i] for i in list(set(elements))]
 
             nodes = []
-            for e in elements:
-                nodes = nodes + e.nodes
+            for e in [e for e in elements if len(set(e.nodes).intersection(mapped)) == 2]:
+                nodes = nodes + list(set(e.nodes).difference(nodes+mapped))
 
-        assert sum([len(c) for c in colors]) == len(self.nodes)
+        assert len(mapped) == len(self.nodes)
+
+        self.colors = colors
         return colors
 
     def elementsByTag(self, tags):

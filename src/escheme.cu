@@ -1,26 +1,26 @@
 /*
-The MIT License (MIT)
+ The MIT License (MIT)
 
-Copyright (c) 2014 Leonardo Kewitz
+ Copyright (c) 2014 Leonardo Kewitz
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+ Permission is hereby granted, free of charge, to any person obtaining a copy
+ of this software and associated documentation files (the "Software"), to deal
+ in the Software without restriction, including without limitation the rights
+ to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ copies of the Software, and to permit persons to whom the Software is
+ furnished to do so, subject to the following conditions:
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+ The above copyright notice and this permission notice shall be included in all
+ copies or substantial portions of the Software.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-*/
+ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ SOFTWARE.
+ */
 
 #include <stdio.h>
 #include <string.h>
@@ -31,11 +31,12 @@ SOFTWARE.
 #include "./cuda_snippets.h"
 #include "./escheme.h"
 
+#define BSIZE 512
 #define smalloc(a, b) CudaSafeCall(cudaMalloc(a, b))
 #define smemcpy(a, b, c, d) CudaSafeCall(cudaMemcpy(a, b, c, d))
 #define putf(a, b) smemcpy(a, b, sizeof(float), cudaMemcpyHostToDevice);
 #define getf(a, b) smemcpy(a, b, sizeof(float), cudaMemcpyDeviceToHost);
-#define BSIZE 512
+#define cast(t, v) static_cast<t>(v)
 
 // Kernel de pré-processamento responsável por calcular as matrizes de contribu-
 // ição de todos os elementos.
@@ -193,6 +194,7 @@ __global__ void kernel_util_addtovec2(int size, const float scalar, float *vecA,
 extern "C" int runGPU(int ne, int nn, int kmax, float errmin,
                       elementri *elements, node *nodes, float *V, bool verbose,
                       float *bench) {
+    clock_t t = clock();
     int k = 1;
     const dim3 threads(BSIZE);
     const dim3 elementblocks(1 + ne/BSIZE);
@@ -272,6 +274,8 @@ extern "C" int runGPU(int ne, int nn, int kmax, float errmin,
     cudaFree(_elements); cudaFree(_nodes);
     cudaFree(_dsum); cudaFree(_rsum);
 
+    t = clock() - t;
+    bench[0] = cast(float, t)/CLOCKS_PER_SEC;
     return k;
 }
 
@@ -288,8 +292,8 @@ extern "C" int runGPU(int ne, int nn, int kmax, float errmin,
 extern "C" int runCPU(int ne, int nn, int kmax, float errmin,
                       elementri *elements, node *nodes, float *V, bool verbose,
                       float *bench) {
+    clock_t t = clock();
     int i, k;
-
     // Pre-processamento. Calcula as matrizes de contribuição dos elementos.
     float J1, J2, J3, J4, dJ;
     elementri E;
@@ -322,8 +326,8 @@ extern "C" int runCPU(int ne, int nn, int kmax, float errmin,
 
     // Pre-processamento. Calcula dsum e rsum.
     int n1, n2, n3;
-    float *rsum = (float*)malloc(nn*sizeof(float));
-    float *dsum = (float*)malloc(nn*sizeof(float));
+    float *rsum = cast(float*, malloc(nn*sizeof(float)));
+    float *dsum = cast(float*, malloc(nn*sizeof(float)));
     // Inicialização dos vetores.
     for (i = 0; i < nn; i++) {
         rsum[i] = 0.0;
@@ -344,9 +348,9 @@ extern "C" int runCPU(int ne, int nn, int kmax, float errmin,
 
     // CG
     float ri, alpha, beta, sum1, sum2, sum3 = 1, sum4;
-    float *r = (float*)malloc(nn*sizeof(float));
-    float *p = (float*)malloc(nn*sizeof(float));
-    float *u = (float*)malloc(nn*sizeof(float));
+    float *r = cast(float*, malloc(nn*sizeof(float)));
+    float *p = cast(float*, malloc(nn*sizeof(float)));
+    float *u = cast(float*, malloc(nn*sizeof(float)));
 
     // Pré-condicionamento.
     for (i = 0; i < nn; i++) {
@@ -405,6 +409,8 @@ extern "C" int runCPU(int ne, int nn, int kmax, float errmin,
     free(p);
     free(u);
 
+    t = clock() - t;
+    bench[0] = cast(float, t)/CLOCKS_PER_SEC;
     return k;
 }
 
@@ -413,9 +419,9 @@ extern "C" int testeCG(int n, int kmax, float err, float* A, float* x,
                        float* b) {
     int i, j, k = 1;
     float alpha, beta, sum1, sum2, sum3 = 1, sum4;
-    float *r = (float*)malloc(n*sizeof(float));
-    float *p = (float*)malloc(n*sizeof(float));
-    float *u = (float*)malloc(n*sizeof(float));
+    float *r = cast(float*, malloc(n*sizeof(float)));
+    float *p = cast(float*, malloc(n*sizeof(float)));
+    float *u = cast(float*, malloc(n*sizeof(float)));
 
     for (i = 0; i < n; i++) {
         p[i] = b[i];
