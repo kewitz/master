@@ -42,33 +42,41 @@ def timeit(t=False):
     """Função cronômetro."""
     return time.time() - t if t else time.time()
 
+
 def split(array, limit):
     r = []
     for i in range(1+len(array)/limit):
         r.append(array[limit*i:limit*(i+1)])
     return r
 
-class _node(Structure):
-    """Struct `node` utilizada pelo programa C."""
-    _fields_ = [("x", c_float),
-                ("y", c_float),
-                ("i", c_uint),
-                ("calc", c_bool),
-                ("ne", c_uint),
-                ("elements", c_uint*10)]
-
 
 class _elementri(Structure):
     """Struct `element` utilizada pelo programa C."""
     _fields_ = [("nodes", c_uint*3),
                 ("matriz", c_float*6),
-                ("eps", c_float)]
+                ("eps", c_float),
+                ("x", c_float*3),
+                ("y", c_float*3)]
+
+
+class _node(Structure):
+    """Struct `node` utilizada pelo programa C."""
+    _fields_ = [("i", c_uint),
+                ("ne", c_uint),
+                ("elements", c_uint*10)]
 
 
 class _color(Structure):
     """Struct `color` utilizada pelo programa C."""
     _fields_ = [("len", c_uint),
-                ("nodes", POINTER(c_uint))]
+                ("nodes", POINTER(_elementri))]
+
+
+class _group(Structure):
+    _fields_ = [("nn", c_uint),
+                ("ne", c_uint),
+                ("nodes", POINTER(_node)),
+                ("elements", POINTER(_elementri))]
 
 
 class Node(object):
@@ -85,7 +93,7 @@ class Node(object):
     @property
     def ctyped(self):
         """Retorna o Nó em formato `Struct _node`."""
-        r = _node(self.x, self.y, self.i, self.calc, len(self.elements))
+        r = _node(self.i, len(self.elements))
         for i, e in enumerate(self.elements):
             r.elements[i] = e
         return r
@@ -110,6 +118,8 @@ class Element(object):
         else:
             self.nodes = [int(a) for a in x[3+int(ntags):]]
         assert len(self.nodes) <= 3, "You can only use triangular elements."
+        assert max([len(n.elements) for n in self.nodes if n.calc]) <= 10,\
+            "Node belongs to more than 10 elements."
 
     @property
     def ctyped(self):
@@ -118,6 +128,8 @@ class Element(object):
         r.eps = float32(self.eps)
         for i, n in enumerate(self.nodes):
             r.nodes[i] = n.i
+            r.x[i] = n.x
+            r.y[i] = n.y
         return r
 
 
@@ -155,46 +167,57 @@ class Mesh(object):
     def __sizeof__(self):
         return sys.getsizeof(self.elements) + sys.getsizeof(self.nodes)
 
-    def run(self, R=0, errmin=1E-5, kmax=10000, cuda=False, color=True, **kwargs):
+    def run(self, R=0, errmin=1E-5, kmax=10000, cuda=False, **kwargs):
         """Run simulation until converge to `alpha` residue."""
         # Assertions and function setting.
-        if cuda:
+        if cuda is True:
             assert lib.getCUDAdevices() > 0, "No CUDA capable devices found."
             func = lib.runGPU
+        elif cuda is "stream":
+            assert lib.getCUDAdevices() > 0, "No CUDA capable devices found."
+            func = lib.streamGPU
         else:
-            func = lib.runCPUColor
+            func = lib.runCPU
         # Set up constants and other variables.
-        ne, nn = len(self.elements), len(self.nodes)
-        V = zeros(nn, dtype=float32)
+        V = zeros(len(self.nodes), dtype=float32)
         bench = zeros(3, dtype=float32)
-        # Get ctyped elements.
-        c_elements = _elementri * ne
-        elements = c_elements()
-        for i, e in enumerate(self.elements):
-            elements[i] = e.ctyped
-        # Get ctyped nodes.
-        c_nodes = _node * nn
-        nodes = c_nodes()
-        for i, n in enumerate(self.nodes):
-            nodes[i] = n.ctyped
+
+        limit = 1000
+        ngs = split([n for n in self.nodes if n.calc], limit)
+        c_groups = _group * len(ngs)
+        node_groups = []
+        element_groups = []
+        groups = c_groups()
+        for i, ng in enumerate(ngs):
+            # Process elements
+            eg = self.getElements(ng)
+            c_elements = _elementri * len(eg)
+            elements = c_elements()
+            for j, e in enumerate(eg):
+                elements[j] = e.ctyped
+            element_groups.append(elements)
+            # Process nodes
+            c_nodes = _node * len(ng)
+            nodes = c_nodes()
+            for j, n in enumerate(ng):
+                _n = n.ctyped
+                for k, e in enumerate(n.elements):
+                    _n.elements[k] = eg.index(self.elements[e])
+                nodes[j] = _n
+            node_groups.append(nodes)
+            # Create group
+            groups[i] = _group(len(ng), len(eg), node_groups[i],
+                               element_groups[i])
+
         # Set up the boundary information.
         if 'boundary' in kwargs:
             for k in kwargs['boundary']:
                 for i in self.nodesOnLine(k, True):
                     V[i] = kwargs['boundary'][k]
-        # Set up colors.
-        colors = self.coloring(color)
-        nc = len(colors)
-        c_color = _color * nc
-        ccolors = c_color()
-        ccs = []
-        for i, co in enumerate(colors):
-            cs = array(co, dtype=uint32)
-            ccs.append(cs)
-            ccolors[i] = _color(c_uint(len(co)), ctypeslib.as_ctypes(ccs[i]))
+
         # Call function.
-        iters = func(ne, nn, nc, kmax, c_float(R), c_float(errmin), elements,
-                     nodes, ccolors, byref(ctypeslib.as_ctypes(V)),
+        iters = func(len(ngs), len(self.nodes), kmax, c_float(R),
+                     c_float(errmin), groups, byref(ctypeslib.as_ctypes(V)),
                      self.verbose, byref(ctypeslib.as_ctypes(bench)))
 
         return V, iters, bench.tolist()
@@ -212,22 +235,22 @@ class Mesh(object):
             r = [n.i for n in r]
         return list(set(r))
 
-    def coloring(self, limit = 0):
+    def coloring(self, limit=0):
         """
         Return an array of `colors`.
         """
         colors = []
         mapped = []
-        
+
         if limit is False:
-            colors.append([n.i for n in self.nodes if n.calc is False])
-            colors.append([n.i for n in self.nodes if n.calc is True])
+            for calc in [False, True]:
+                colors.append([n.i for n in self.nodes if n.calc is calc])
             return colors
 
         nodes = filter(lambda n: n.calc is False, self.nodes)
         while len(nodes) != 0:
             mapped = mapped + nodes
-            
+
             if len(nodes) > 0:
                 ids = [n.i for n in nodes]
                 if limit is not True and limit > 0:
@@ -251,6 +274,9 @@ class Mesh(object):
         self.colors = colors
         return colors
 
+    def getElements(self, nodes):
+        return [e for e in self.elements if len(set(e.nodes).intersection(nodes)) > 0]
+
     def elementsByTag(self, tags):
         """Return elements tagged by `tag`."""
         tags = [tags] if type(tags) is int else tags
@@ -264,10 +290,10 @@ class Mesh(object):
         y = points[:, 1]
         return tri.Triangulation(x, y)
 
-    def plotMesh(self, **kwargs):
+    def plotMesh(self, result=False, **kwargs):
         fig, ax = plt.subplots()
-        if 'result' in kwargs:
-            self.plotResult(result=kwargs['result'])
+        if 'result' is not False:
+            self.plotResult(result)
         elements = kwargs['elements'] if 'elements' in kwargs\
             else filter(lambda el: el.dim == 2, self.elements)
         for e in elements:
@@ -278,8 +304,8 @@ class Mesh(object):
         ax.axis('equal')
         plt.show()
 
-    def plotResult(self, **kwargs):
+    def plotResult(self, result):
         t = self.triangulate()
-        plt.tricontourf(t, kwargs['result'], 15, cmap=plt.cm.rainbow)
+        plt.tricontourf(t, result, 15, cmap=plt.cm.rainbow)
         plt.colorbar()
         plt.show()

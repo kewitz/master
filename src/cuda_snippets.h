@@ -22,6 +22,12 @@
  SOFTWARE.
  */
 
+// Macros
+#define smalloc(a, b) CudaSafeCall(cudaMalloc(a, b))
+#define smemcpy(a, b, c, d) CudaSafeCall(cudaMemcpy(a, b, c, d))
+#define cast(t, v) static_cast<t>(v)
+
+// Assert
 #define CUDA_ERROR_CHECK
 #define CudaSafeCall( err ) __cudaSafeCall( err, __FILE__, __LINE__ )
 #define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )

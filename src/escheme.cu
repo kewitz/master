@@ -32,11 +32,8 @@
 #include "./escheme.h"
 
 #define BSIZE 512
-#define smalloc(a, b) CudaSafeCall(cudaMalloc(a, b))
-#define smemcpy(a, b, c, d) CudaSafeCall(cudaMemcpy(a, b, c, d))
 #define putf(a, b) smemcpy(a, b, sizeof(float), cudaMemcpyHostToDevice);
 #define getf(a, b) smemcpy(a, b, sizeof(float), cudaMemcpyDeviceToHost);
-#define cast(t, v) static_cast<t>(v)
 
 // Kernel de pré-processamento responsável por calcular as matrizes de contribu-
 // ição de todos os elementos.
