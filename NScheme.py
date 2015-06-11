@@ -33,6 +33,7 @@ import matplotlib.tri as tri
 # Importa a biblioteca CUDA.
 lib = cdll.LoadLibrary('./nscheme.so')
 lib.hello()
+lib.alloc._restype_ = c_uint
 #assert lib.getCUDAdevices() > 0, "No CUDA capable devices found."
 
 eps = 8.854187E-12
@@ -179,10 +180,11 @@ class Mesh(object):
         else:
             func = lib.runCPU
         # Set up constants and other variables.
-        V = zeros(len(self.nodes), dtype=float32)
+        DOF = len(self.nodes)
+        V = zeros(DOF, dtype=float32)
         bench = zeros(3, dtype=float32)
 
-        limit = 1000
+        limit = lib.alloc(DOF)
         ngs = split([n for n in self.nodes if n.calc], limit)
         c_groups = _group * len(ngs)
         node_groups = []
@@ -216,7 +218,7 @@ class Mesh(object):
                     V[i] = kwargs['boundary'][k]
 
         # Call function.
-        iters = func(len(ngs), len(self.nodes), kmax, c_float(R),
+        iters = func(len(ngs), DOF, kmax, c_float(R),
                      c_float(errmin), groups, byref(ctypeslib.as_ctypes(V)),
                      self.verbose, byref(ctypeslib.as_ctypes(bench)))
 

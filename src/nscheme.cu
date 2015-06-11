@@ -32,7 +32,7 @@
 #include "./nscheme.h"
 
 #define DEBUG false
-#define BSIZE 128
+#define BSIZE 256
 
 #define cma(a, b, c, d, e) CudaSafeCall(cudaMemcpyAsync(a, b, c, d, e))
 
@@ -102,6 +102,14 @@ __global__ void kernel_element(int ne, elementri *elements) {
     E->matriz[5] = (J4*-1*J2 - J3*J1)/dJ;              // C23 C32
 }
 
+// Calcula espaço teórico máximo de nós e elementos que cabem na memória da GPU.
+extern "C" unsigned int alloc(const int nn) {
+    cudaDeviceProp prop = getInfo();
+    unsigned int gm = prop.totalGlobalMem*.9 - sizeof(float)*nn;
+    cudaDeviceReset();
+    return cast(unsigned int, gm / (sizeof(node) + 6*sizeof(elementri)));
+}
+
 // Função externa que processa o problema, responsável por alocar a memória no
 // device e invocar todas os kernels necessários.
 extern "C" int runGPU(const int ng, const int nn, const int kmax, const float R,
@@ -115,9 +123,13 @@ extern "C" int runGPU(const int ng, const int nn, const int kmax, const float R,
     elementri *d_elements;
     node *d_nodes;
 
+    unsigned int maxn = alloc(nn);
+
     // Malloc e Memcpy de variáveis globais.
     smalloc(&d_V, sizeof(float)*nn);
     smalloc(&d_conv, sizeof(int));
+    smalloc(&d_nodes, sizeof(node)*maxn);
+    smalloc(&d_elements, sizeof(elementri)*maxn*6);
     smemcpy(d_V, V, sizeof(float)*nn, cudaMemcpyHostToDevice);
 
     // Iterações
@@ -128,9 +140,6 @@ extern "C" int runGPU(const int ng, const int nn, const int kmax, const float R,
         for (g = 0; g < ng; g++) {
             cudaDeviceSynchronize();
             G = groups[g];
-            // Malloc
-            smalloc(&d_elements, sizeof(elementri)*G.ne);
-            smalloc(&d_nodes, sizeof(node)*G.nn);
             // Memcpy e processamento dos elementos.
             smemcpy(d_elements, G.elements, sizeof(elementri)*G.ne,
                 cudaMemcpyHostToDevice);
@@ -140,9 +149,6 @@ extern "C" int runGPU(const int ng, const int nn, const int kmax, const float R,
                 cudaMemcpyHostToDevice);
             kernel_node<<<(1 + G.nn/BSIZE), BSIZE>>>(G.nn, R, errmin,
                 d_elements, d_nodes, d_V, d_conv);
-            cudaDeviceSynchronize();
-            cudaFree(d_elements);
-            cudaFree(d_nodes);
         }
         cudaDeviceSynchronize();
         smemcpy(&conv, d_conv, sizeof(int), cudaMemcpyDeviceToHost);
@@ -152,12 +158,15 @@ extern "C" int runGPU(const int ng, const int nn, const int kmax, const float R,
     smemcpy(V, d_V, sizeof(float)*nn, cudaMemcpyDeviceToHost);
     cudaDeviceSynchronize();
 
+    cudaFree(d_elements); cudaFree(d_nodes);
     cudaFree(d_V); cudaFree(d_conv);
 
     t = clock() - t;
     bench[0] = cast(float, t)/CLOCKS_PER_SEC;
     return k;
 }
+
+
 
 extern "C" int streamGPU(const int ng, const int nn, const int kmax, const float R,
     const float errmin, group *groups, float *V, bool verbose, float *bench) {
@@ -166,9 +175,11 @@ extern "C" int streamGPU(const int ng, const int nn, const int kmax, const float
     // Aloca variáveis.
     int k = 1, g, conv, *d_conv;
     float *d_V;
-    group G;
-    elementri *d_elements;
-    node *d_nodes;
+    group *G;
+    elementri *d_elements[2];
+    node *d_nodes[2];
+
+    cudaDeviceProp props = getInfo();
 
     // Cria streams.
     cudaStream_t s[2];
@@ -185,24 +196,33 @@ extern "C" int streamGPU(const int ng, const int nn, const int kmax, const float
     while (conv == 1 && k < kmax) {
         conv = 0;
         cma(d_conv, &conv, sizeof(int), cudaMemcpyHostToDevice, s[0]);
-        for (g = 0; g < ng; g++) {
-            G = groups[g];
-            // Malloc
-            smalloc(&d_elements, sizeof(elementri)*G.ne);
-            smalloc(&d_nodes, sizeof(node)*G.nn);
-            // Memcpy e processamento dos elementos.
-            cma(d_elements, G.elements, sizeof(elementri)*G.ne,
+        g = 0;
+
+        G = &groups[g];
+        smalloc(&d_elements[g%2], sizeof(elementri)*G->ne);
+        smalloc(&d_nodes[g%2], sizeof(node)*G->nn);
+        cma(d_elements[g%2], G->elements, sizeof(elementri)*G->ne,
+            cudaMemcpyHostToDevice, s[0]);
+        cma(d_nodes[g%2], G->nodes, sizeof(node)*G->nn,
+            cudaMemcpyHostToDevice, s[1]);
+
+        for (g = 1; g < ng; g++) {
+            kernel_element<<<(1 + G->ne/BSIZE), BSIZE, 0, s[0]>>>(G->ne,
+                d_elements[(g-1)%2]);
+            kernel_node<<<(1 + G->nn/BSIZE), BSIZE, 0, s[0]>>>(G->nn, R, errmin,
+                d_elements[(g-1)%2], d_nodes[(g-1)%2], d_V, d_conv);
+
+            G = &groups[g];
+            smalloc(&d_elements[g%2], sizeof(elementri)*G->ne);
+            smalloc(&d_nodes[g%2], sizeof(node)*G->nn);
+            cma(d_elements[g%2], G->elements, sizeof(elementri)*G->ne,
                 cudaMemcpyHostToDevice, s[0]);
-            // Memcpy dos nós enquanto se processa os elementos.
-            cma(d_nodes, G.nodes, sizeof(node)*G.nn,
+            cma(d_nodes[g%2], G->nodes, sizeof(node)*G->nn,
                 cudaMemcpyHostToDevice, s[1]);
-            kernel_element<<<(1 + G.ne/BSIZE), BSIZE, 0, s[0]>>>(G.ne,
-                d_elements);
-            kernel_node<<<(1 + G.nn/BSIZE), BSIZE, 0, s[0]>>>(G.nn, R, errmin,
-                d_elements, d_nodes, d_V, d_conv);
+
             cudaDeviceSynchronize();
-            cudaFree(d_elements);
-            cudaFree(d_nodes);
+            cudaFree(d_elements[(g-1)%2]);
+            cudaFree(d_nodes[(g-1)%2]);
         }
         cudaDeviceSynchronize();
         smemcpy(&conv, d_conv, sizeof(int), cudaMemcpyDeviceToHost);

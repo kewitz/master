@@ -27,6 +27,24 @@
 #define smemcpy(a, b, c, d) CudaSafeCall(cudaMemcpy(a, b, c, d))
 #define cast(t, v) static_cast<t>(v)
 
+// Snippets
+extern "C" void hello() {
+    printf("[!] Compiled in %s %s\n", __DATE__, __TIME__);
+}
+
+extern "C" cudaDeviceProp getInfo() {
+    cudaDeviceProp prop;
+    cudaGetDeviceProperties(&prop, 0);
+    // printf("[!] Device Name: %s\n", prop.name);
+    return prop;
+}
+
+extern "C" int getCUDAdevices() {
+    int deviceCount = 0;
+    cudaError_t error_id = cudaGetDeviceCount(&deviceCount);
+    return deviceCount;
+}
+
 // Assert
 #define CUDA_ERROR_CHECK
 #define CudaSafeCall( err ) __cudaSafeCall( err, __FILE__, __LINE__ )

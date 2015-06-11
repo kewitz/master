@@ -33,22 +33,3 @@ typedef struct {
     float y;
     bool calc;
 } node;
-
-// HEADER
-
-// Snippets
-extern "C" void hello() {
-    printf("[!] Compiled in %s %s\n", __DATE__, __TIME__);
-}
-
-extern "C" void getInfo() {
-    cudaDeviceProp prop;
-    CudaSafeCall(cudaGetDeviceProperties(&prop, 0) );
-    printf("[!] Device Name: %s\n", prop.name);
-}
-
-extern "C" int getCUDAdevices() {
-    int deviceCount = 0;
-    cudaError_t error_id = cudaGetDeviceCount(&deviceCount);
-    return deviceCount;
-}

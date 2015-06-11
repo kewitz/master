@@ -13,14 +13,15 @@ path = """./res/"""
 split = ns.split
 m = 1
 
-for cuda in [False, True, 'stream']:
+print "DOF\tCUDA\tTime\tIterations"
+for c in [(c, f) for f in ['teste1_1.msh', 'teste1_2.msh', 'teste1_3.msh', 'teste1_4.msh', 'teste1_5.msh'] for c in [False, True]]:
     del m
-    m = ns.Mesh(file=path + "microstrip2.msh", verbose=False)
-    bound = {1: 0.0, 2: 0.0, 9: 0.0, 10: 0.0, 5: 5.0}
+    cuda, fi = c
+    m = ns.Mesh(file=path + fi, verbose=False)
+    bound = {1: 100.0, 2: 66.0, 3: 33.0, 4: 0.0}
     
-    for n in m.nodesOnLine([1, 2, 9, 10, 5]):
+    for n in m.nodesOnLine([1, 2, 3, 4]):
         n.calc = False
 
     v, i, b = m.run(cuda=cuda, boundary=bound, R=0, errmin=1E-6)
-    print "CUDA %s : %fs" % (cuda, b[0])
-    
+    print "%i\t%s\t%fs\t%i" % (len(m.nodes), cuda, b[0], i)
