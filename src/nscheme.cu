@@ -38,8 +38,8 @@
 
 
 // Kernel responsável por uma iteração.
-__global__ void kernel_node(const int nn, const float R, const float errmin,
-    elementri *elements, node *nodes, float *V, int *conv) {
+__global__ void kernel_node(int nn, float R, float errmin, elementri *elements,
+    node *nodes, float *V, int *conv) {
 
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= nn) return;
@@ -112,10 +112,11 @@ extern "C" unsigned int alloc(const int nn) {
 
 // Função externa que processa o problema, responsável por alocar a memória no
 // device e invocar todas os kernels necessários.
-extern "C" int runGPU(const int ng, const int nn, const int kmax, const float R,
-    const float errmin, group *groups, float *V, bool verbose, float *bench) {
+extern "C" int runGPU(int ng, int nn, int kmax, float R, float errmin,
+    group *groups, float *V, bool verbose, float *bench) {
     // Inicia cronômetro do benchmark.
     clock_t t = clock();
+    cudaDeviceReset();
     // Aloca variáveis.
     int k = 1, g, conv, *d_conv;
     float *d_V;
@@ -168,61 +169,51 @@ extern "C" int runGPU(const int ng, const int nn, const int kmax, const float R,
 
 
 
-extern "C" int streamGPU(const int ng, const int nn, const int kmax, const float R,
-    const float errmin, group *groups, float *V, bool verbose, float *bench) {
+extern "C" int streamGPU(int ng, int nn, int kmax, float R, float errmin,
+    group *groups, float *V, bool verbose, float *bench) {
     // Inicia cronômetro do benchmark.
     clock_t t = clock();
+    cudaDeviceReset();
     // Aloca variáveis.
     int k = 1, g, conv, *d_conv;
     float *d_V;
     group *G;
-    elementri *d_elements[2];
-    node *d_nodes[2];
-
-    cudaDeviceProp props = getInfo();
-
-    // Cria streams.
-    cudaStream_t s[2];
-    for (int i = 0; i < 2; ++i)
-        cudaStreamCreate(&s[i]);
+    elementri *d_elements;
+    node *d_nodes;
 
     // Malloc e Memcpy de variáveis globais.
+    unsigned int maxn = alloc(nn);
     smalloc(&d_V, sizeof(float)*nn);
     smalloc(&d_conv, sizeof(int));
-    cma(d_V, V, sizeof(float)*nn, cudaMemcpyHostToDevice, s[0]);
+    smalloc(&d_nodes, sizeof(node)*maxn);
+    smalloc(&d_elements, sizeof(elementri)*maxn*6);
+    // Inicia a cópia do vetor V.
+    smemcpy(d_V, V, sizeof(float)*nn, cudaMemcpyHostToDevice);
+
+    // Cria streams.
+    cudaStream_t stream[2];
+    for (int i = 0; i < 2; ++i)
+        cudaStreamCreate(&stream[i]);
 
     // Iterações
     conv = 1;
     while (conv == 1 && k < kmax) {
         conv = 0;
-        cma(d_conv, &conv, sizeof(int), cudaMemcpyHostToDevice, s[0]);
-        g = 0;
+        smemcpy(d_conv, &conv, sizeof(int), cudaMemcpyHostToDevice);
 
-        G = &groups[g];
-        smalloc(&d_elements[g%2], sizeof(elementri)*G->ne);
-        smalloc(&d_nodes[g%2], sizeof(node)*G->nn);
-        cma(d_elements[g%2], G->elements, sizeof(elementri)*G->ne,
-            cudaMemcpyHostToDevice, s[0]);
-        cma(d_nodes[g%2], G->nodes, sizeof(node)*G->nn,
-            cudaMemcpyHostToDevice, s[1]);
-
-        for (g = 1; g < ng; g++) {
-            kernel_element<<<(1 + G->ne/BSIZE), BSIZE, 0, s[0]>>>(G->ne,
-                d_elements[(g-1)%2]);
-            kernel_node<<<(1 + G->nn/BSIZE), BSIZE, 0, s[0]>>>(G->nn, R, errmin,
-                d_elements[(g-1)%2], d_nodes[(g-1)%2], d_V, d_conv);
-
+        for (g = 0; g < ng; g++) {
             G = &groups[g];
-            smalloc(&d_elements[g%2], sizeof(elementri)*G->ne);
-            smalloc(&d_nodes[g%2], sizeof(node)*G->nn);
-            cma(d_elements[g%2], G->elements, sizeof(elementri)*G->ne,
-                cudaMemcpyHostToDevice, s[0]);
-            cma(d_nodes[g%2], G->nodes, sizeof(node)*G->nn,
-                cudaMemcpyHostToDevice, s[1]);
-
+            cma(d_elements, G->elements, sizeof(elementri)*G->ne,
+                cudaMemcpyHostToDevice, stream[0]);
+            cma(d_nodes, G->nodes, sizeof(node)*G->nn,
+                cudaMemcpyHostToDevice, stream[1]);
+            kernel_element<<<(1 + G->ne/BSIZE), BSIZE, 0, stream[0]>>>(G->ne,
+                d_elements);
             cudaDeviceSynchronize();
-            cudaFree(d_elements[(g-1)%2]);
-            cudaFree(d_nodes[(g-1)%2]);
+
+            kernel_node<<<(1 + G->nn/BSIZE), BSIZE, 0, stream[0]>>>(G->nn, R, errmin,
+                d_elements, d_nodes, d_V, d_conv);
+            cudaDeviceSynchronize();
         }
         cudaDeviceSynchronize();
         smemcpy(&conv, d_conv, sizeof(int), cudaMemcpyDeviceToHost);
@@ -233,12 +224,14 @@ extern "C" int streamGPU(const int ng, const int nn, const int kmax, const float
     cudaDeviceSynchronize();
 
     for (int i = 0; i < 2; ++i)
-        cudaStreamDestroy(s[i]);
+        cudaStreamDestroy(stream[i]);
 
     cudaFree(d_V); cudaFree(d_conv);
+    cudaFree(d_elements); cudaFree(d_nodes);
 
     t = clock() - t;
     bench[0] = cast(float, t)/CLOCKS_PER_SEC;
+
     return k;
 }
 
@@ -259,8 +252,8 @@ void integ_element(elementri *E) {
     E->matriz[5] = (J4*-1*J2 - J3*J1)/dJ;                // C23 C32
 }
 
-void calc_node(const node N, const float errmin, const float R, float *V,
-    elementri *elements, bool *run) {
+void calc_node(node N, float errmin, float R, float *V, elementri *elements,
+    bool *run) {
     int e;
     float diag_sum = 0.0f, right_sum = 0.0f, Vi, Vo, diff;
     elementri E;
@@ -292,8 +285,8 @@ void calc_node(const node N, const float errmin, const float R, float *V,
     V[N.i] = Vi;
 }
 
-extern "C" int runCPU(const int ng, const int nn, const int kmax, const float R,
-    const float errmin, group *groups, float *V, bool verbose, float *bench) {
+extern "C" int runCPU(int ng, int nn, int kmax, float R, float errmin,
+    group *groups, float *V, bool verbose, float *bench) {
     // Inicia cronômetro do benchmark.
     clock_t t = clock();
     // Aloca variáveis.
@@ -321,7 +314,7 @@ extern "C" int runCPU(const int ng, const int nn, const int kmax, const float R,
     return k;
 }
 
-extern "C" void test_group(const int ng, group *groups) {
+extern "C" void test_group(int ng, group *groups) {
     unsigned int i;
 
     for (i = 0; i < ng; i++) {

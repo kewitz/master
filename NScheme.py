@@ -168,6 +168,11 @@ class Mesh(object):
     def __sizeof__(self):
         return sys.getsizeof(self.elements) + sys.getsizeof(self.nodes)
 
+    @property
+    def DOF(self):
+        return len([n for n in self.nodes if n.calc])
+
+
     def run(self, R=0, errmin=1E-5, kmax=10000, cuda=False, **kwargs):
         """Run simulation until converge to `alpha` residue."""
         # Assertions and function setting.

@@ -1,2 +1,2 @@
 #!/bin/bash
-gdb --args python $1
+cuda-gdb --args python $1
