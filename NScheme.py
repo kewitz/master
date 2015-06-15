@@ -44,9 +44,12 @@ def timeit(t=False):
     return time.time() - t if t else time.time()
 
 
-def split(array, limit):
+def split(array, limit, minStacks=False):
     r = []
-    for i in range(1+len(array)/limit):
+    if minStacks:
+        limit = 1+len(array)/minStacks
+    stacks = 1+len(array)/limit
+    for i in range(stacks):
         r.append(array[limit*i:limit*(i+1)])
     return r
 
@@ -190,7 +193,7 @@ class Mesh(object):
         bench = zeros(3, dtype=float32)
 
         limit = lib.alloc(DOF)
-        ngs = split([n for n in self.nodes if n.calc], limit)
+        ngs = split([n for n in self.nodes if n.calc], limit, 2)
         c_groups = _group * len(ngs)
         node_groups = []
         element_groups = []
