@@ -176,10 +176,10 @@ extern "C" int streamGPU(int ng, int nn, int kmax, float R, float errmin,
     cudaDeviceReset();
     // Aloca variáveis.
     int k = 1, g, conv, *d_conv;
-    bool copye = true, copyn = true;
+    bool copye = true;
     float *d_V;
     elementri *d_elements, *pe;
-    node *d_nodes, *pn;
+    node *d_nodes;
     group *G;
 
     unsigned int maxn = alloc(nn);
@@ -201,7 +201,6 @@ extern "C" int streamGPU(int ng, int nn, int kmax, float R, float errmin,
 
     // Define ponteiros temporários para streaming.
     pe = d_elements;
-    pn = d_nodes;
 
     // Iterações
     conv = 1;
@@ -216,17 +215,14 @@ extern "C" int streamGPU(int ng, int nn, int kmax, float R, float errmin,
                 cma(pe, G->elements, sizeof(elementri)*G->ne,
                     cudaMemcpyHostToDevice, stream[0]);
             }
-            if (copyn) {
-                pn = d_nodes;
-                cma(pn, G->nodes, sizeof(node)*G->nn,
-                    cudaMemcpyHostToDevice, stream[1]);
-            }
+            cma(d_nodes, G->nodes, sizeof(node)*G->nn,
+                cudaMemcpyHostToDevice, stream[1]);
             kernel_element<<<(1 + G->ne/BSIZE), BSIZE, 0, stream[0]>>>(G->ne,
                 pe);
             cudaDeviceSynchronize();
 
             kernel_node<<<(1 + G->nn/BSIZE), BSIZE, 0, stream[0]>>>(G->nn, R,
-                errmin, pe, pn, d_V, d_conv);
+                errmin, pe, d_nodes, d_V, d_conv);
             // Se não for o último grupo, já copia novos elementos.
             if (g < ng-1 && sE - sizeof(elementri)*G->ne > sizeof(elementri)*groups[g+1].ne) {
                 pe += G->ne;

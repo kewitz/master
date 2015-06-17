@@ -23,13 +23,21 @@
  */
 
 typedef struct {
-    int nodes[3];
+    unsigned int nodes[3];
     float matriz[6]; // C11 C22 C33 C12 C13 C23
     float eps;
-} elementri;
+    float x[3];
+    float y[3];
+} element;
 
 typedef struct {
-    float x;
-    float y;
+    unsigned int i;
     bool calc;
 } node;
+
+typedef struct {
+    unsigned int nn;
+    unsigned int ne;
+    node *nodes;
+    element *elements;
+} group;

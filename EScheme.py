@@ -41,18 +41,36 @@ def timeit(t=False):
     return time.time() - t if t else time.time()
 
 
-class _node(Structure):
-    """Struct `node` utilizada pelo programa C."""
-    _fields_ = [("x", c_float),
-                ("y", c_float),
-                ("calc", c_bool)]
+def split(array, limit, minStacks=False):
+    r = []
+    if minStacks:
+        limit = 1+len(array)/minStacks
+    stacks = 1+len(array)/limit
+    for i in range(stacks):
+        r.append(array[limit*i:limit*(i+1)])
+    return r
 
 
 class _elementri(Structure):
     """Struct `element` utilizada pelo programa C."""
-    _fields_ = [("nodes", c_int*3),
+    _fields_ = [("nodes", c_uint*3),
                 ("matriz", c_float*6),
-                ("eps", c_float)]
+                ("eps", c_float),
+                ("x", c_float*3),
+                ("y", c_float*3)]
+
+
+class _node(Structure):
+    """Struct `element` utilizada pelo programa C."""
+    _fields_ = [("i", c_uint),
+                ("calc", c_bool)]
+
+
+class _group(Structure):
+    _fields_ = [("nn", c_uint),
+                ("ne", c_uint),
+                ("nodes", POINTER(_node)),
+                ("elements", POINTER(_elementri))]
 
 
 class Node(object):
@@ -68,9 +86,7 @@ class Node(object):
 
     @property
     def ctyped(self):
-        """Retorna o Nó em formato `Struct _node`."""
-        r = _node(self.x, self.y, self.calc)
-        return r
+        return _node(c_uint(self.i), self.calc)
 
 
 class Element(object):
@@ -100,6 +116,8 @@ class Element(object):
         r.eps = c_float(self.eps)
         for i, n in enumerate(self.nodes):
             r.nodes[i] = n.i
+            r.x[i] = n.x
+            r.y[i] = n.y
         return r
 
 
@@ -138,7 +156,7 @@ class Mesh(object):
     def __sizeof__(self):
         return sys.getsizeof(self.elements) + sys.getsizeof(self.nodes)
 
-    def run(self, errmin=1E-7, maxiter=1000, cuda=False, **kwargs):
+    def run(self, errmin=1E-7, kmax=1000, cuda=False, **kwargs):
         """Run simulation until converge to `alpha` residue."""
         if cuda:
             assert lib.getCUDAdevices() > 0, "No CUDA capable devices found."
@@ -149,17 +167,31 @@ class Mesh(object):
         V = zeros(nn, dtype=float32)
         bench = zeros(3, dtype=float32)
 
-        # Get ctyped elements.
-        c_elements = _elementri * ne
-        elements = c_elements()
-        for i, e in enumerate(self.elements):
-            elements[i] = e.ctyped
-        # Get ctyped nodes.
-
-        c_nodes = _node * nn
-        nodes = c_nodes()
-        for i, n in enumerate(self.nodes):
-            nodes[i] = n.ctyped
+        limit = lib.alloc(nn)
+        egs = split([e for e in self.elements], limit, 2)
+        ngs = split([n for n in self.nodes], limit, 2)
+        c_groups = _group * len(egs)
+        element_groups = []
+        node_groups = []
+        groups = c_groups()
+        for i, eg in enumerate(egs):
+            # Process elements
+            c_elements = _elementri * len(eg)
+            elements = c_elements()
+            for j, e in enumerate(eg):
+                elements[j] = e.ctyped
+            element_groups.append(elements)
+            # Process nodes
+            # ng = self.getNodes(eg)
+            ng = ngs[i]
+            c_nodes = _node*len(ng)
+            nodes = c_nodes()
+            for j, n in enumerate(ng):
+                nodes[j] = n.ctyped
+            node_groups.append(nodes)
+            # Create group
+            groups[i] = _group(len(ng), len(eg), node_groups[i],
+                               element_groups[i])
 
         # Set up the boundary information.
         if 'boundary' in kwargs:
@@ -168,7 +200,7 @@ class Mesh(object):
                     V[i] = kwargs['boundary'][k]
 
         # Check if it's CUDA capable.
-        iters = func(ne, nn, maxiter, c_float(errmin), elements, nodes,
+        iters = func(len(egs), nn, kmax, c_float(errmin), groups,
                      byref(ctypeslib.as_ctypes(V)), self.verbose,
                      byref(ctypeslib.as_ctypes(bench)))
         return V, iters, bench.tolist()
@@ -185,6 +217,12 @@ class Mesh(object):
         if indexOnly:
             r = [n.i for n in r]
         return list(set(r))
+
+    def getElements(self, nodes):
+        return [e for e in self.elements if len(set(e.nodes).intersection(nodes)) > 0]
+
+    def getNodes(self, elements):
+        return list(set([n for e in elements for n in e.nodes]))
 
     def elementsByTag(self, tags):
         """Return elements tagged by `tag`."""

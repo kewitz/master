@@ -34,7 +34,17 @@
 #define BSIZE 512
 #define putf(a, b) smemcpy(a, b, sizeof(float), cudaMemcpyHostToDevice);
 #define getf(a, b) smemcpy(a, b, sizeof(float), cudaMemcpyDeviceToHost);
+#define CUDA false
 
+extern "C" unsigned int alloc(const int nn) {
+    cudaDeviceProp prop = getInfo();
+    unsigned int gm = prop.totalGlobalMem*.8 - sizeof(float)*nn*6
+                      - sizeof(float)*4;
+    cudaDeviceReset();
+    return cast(unsigned int, gm / (sizeof(node) + 6*sizeof(element)));
+}
+
+#if CUDA
 // Kernel de pré-processamento responsável por calcular as matrizes de contribu-
 // ição de todos os elementos.
 //    ne: número de elementos.
@@ -45,14 +55,13 @@ __global__ void kernel_integration(int ne, elementri *elements, node *nodes) {
     if (i >= ne) return;
 
     elementri E = elements[i];
-    node N1 = nodes[E.nodes[0]], N2 = nodes[E.nodes[1]], N3 = nodes[E.nodes[2]];
 
     // Calcula argumentos necessários
     float J1, J2, J3, J4, dJ;
-    J1 = N2.x - N1.x;
-    J2 = N2.y - N1.y;
-    J3 = N3.x - N1.x;
-    J4 = N3.y - N1.y;
+    J1 = E.x[1] - E.x[0];
+    J2 = E.y[1] - E.y[0];
+    J3 = E.x[2] - E.x[0];
+    J4 = E.y[2] - E.y[0];
     dJ = 2*(J1*J4 - J3*J2);
 
     // Calcula a matriz de contribuições do elemento.
@@ -275,7 +284,31 @@ extern "C" int runGPU(int ne, int nn, int kmax, float errmin,
     bench[0] = cast(float, t)/CLOCKS_PER_SEC;
     return k;
 }
+#endif
 
+void integ_element(element *E) {
+    float J1, J2, J3, J4, dJ;
+    // Calcula argumentos necessários
+    J1 = E->x[1] - E->x[0];
+    J2 = E->y[1] - E->y[0];
+    J3 = E->x[2] - E->x[0];
+    J4 = E->y[2] - E->y[0];
+    dJ = 2*(J1*J4 - J3*J2);
+
+    // Calcula a matriz de contribuições do elemento.
+    E->matriz[0] = dJ != 0.0f ?
+        (pow(J2-J4, 2.0f) + pow(J3-J1, 2.0f))/dJ : 0.0f;
+    E->matriz[1] = dJ != 0.0f ?
+        (pow(J4, 2.0f) + pow(J3, 2.0f))/dJ : 0.0f;
+    E->matriz[2] = dJ != 0.0f ?
+        (pow(J2, 2.0f) + pow(J1, 2.0f))/dJ : 0.0f;
+    E->matriz[3] = dJ != 0.0f ?
+        ((J2-J4)*J4 - (J3-J1)*J3)/dJ : 0.0f;
+    E->matriz[4] = dJ != 0.0f ?
+        ((J3-J1)*J1 - (J2-J4)*J2)/dJ : 0.0f;
+    E->matriz[5] = dJ != 0.0f ?
+        (J4*-1*J2 - J3*J1)/dJ : 0.0f;
+}
 // Função externa que processa o problema no CPU.
 //    ne: número de elementos.
 //    nn: número de nós.
@@ -286,40 +319,14 @@ extern "C" int runGPU(int ne, int nn, int kmax, float errmin,
 //    V: vetor de tensões dos nós.
 //    verbose: se 'true' imprime informações do algorítmo.
 //    bench: array de tempos de processamento para benchmarking.
-extern "C" int runCPU(int ne, int nn, int kmax, float errmin,
-                      elementri *elements, node *nodes, float *V, bool verbose,
+extern "C" int runCPU(int ng, int nn, int kmax, float errmin,
+                      group *groups, float *V, bool verbose,
                       float *bench) {
     clock_t t = clock();
-    int i, k;
-    // Pre-processamento. Calcula as matrizes de contribuição dos elementos.
-    float J1, J2, J3, J4, dJ;
-    elementri E;
-    node N1, N2, N3;
-    for (i = 0; i < ne; i++) {
-        E = elements[i];
-        N1 = nodes[E.nodes[0]]; N2 = nodes[E.nodes[1]]; N3 = nodes[E.nodes[2]];
-
-        // Calcula argumentos necessários
-        J1 = N2.x - N1.x;
-        J2 = N2.y - N1.y;
-        J3 = N3.x - N1.x;
-        J4 = N3.y - N1.y;
-        dJ = 2*(J1*J4 - J3*J2);
-
-        // Calcula a matriz de contribuições do elemento.
-        elements[i].matriz[0] = dJ != 0.0 ?
-            (pow(J2-J4, 2.0) + pow(J3-J1, 2.0))/dJ : 0.0;
-        elements[i].matriz[1] = dJ != 0.0 ?
-            (pow(J4, 2.0) + pow(J3, 2.0))/dJ : 0.0;
-        elements[i].matriz[2] = dJ != 0.0 ?
-            (pow(J2, 2.0) + pow(J1, 2.0))/dJ : 0.0;
-        elements[i].matriz[3] = dJ != 0.0 ?
-            ((J2-J4)*J4 - (J3-J1)*J3)/dJ : 0.0;
-        elements[i].matriz[4] = dJ != 0.0 ?
-            ((J3-J1)*J1 - (J2-J4)*J2)/dJ : 0.0;
-        elements[i].matriz[5] = dJ != 0.0 ?
-            (J4*-1*J2 - J3*J1)/dJ : 0.0;
-    }
+    unsigned int i, j, k;
+    element *E;
+    group *G;
+    node N;
 
     // Pre-processamento. Calcula dsum e rsum.
     int n1, n2, n3;
@@ -327,33 +334,42 @@ extern "C" int runCPU(int ne, int nn, int kmax, float errmin,
     float *dsum = cast(float*, malloc(nn*sizeof(float)));
     // Inicialização dos vetores.
     for (i = 0; i < nn; i++) {
-        rsum[i] = 0.0;
-        dsum[i] = 0.0;
+        rsum[i] = 0.0f;
+        dsum[i] = 0.0f;
     }
-    for (i = 0; i < ne; i++) {
-        E = elements[i];
-        n1 = E.nodes[0]; n2 = E.nodes[1]; n3 = E.nodes[2];
+    for (i = 0; i < ng; i++) {
+        G = &groups[i];
+        for (j = 0; j < G->ne; j++) {
+            E = &G->elements[j];
+            integ_element(E);
 
-        dsum[n1] += E.matriz[0];
-        dsum[n2] += E.matriz[1];
-        dsum[n3] += E.matriz[2];
+            n1 = E->nodes[0]; n2 = E->nodes[1]; n3 = E->nodes[2];
 
-        rsum[n1] += - E.matriz[3]*V[n2] - E.matriz[4]*V[n3];
-        rsum[n2] += - E.matriz[3]*V[n1] - E.matriz[5]*V[n3];
-        rsum[n3] += - E.matriz[4]*V[n1] - E.matriz[5]*V[n2];
+            dsum[n1] += E->matriz[0];
+            dsum[n2] += E->matriz[1];
+            dsum[n3] += E->matriz[2];
+
+            rsum[n1] += - E->matriz[3]*V[n2] - E->matriz[4]*V[n3];
+            rsum[n2] += - E->matriz[3]*V[n1] - E->matriz[5]*V[n3];
+            rsum[n3] += - E->matriz[4]*V[n1] - E->matriz[5]*V[n2];
+        }
     }
 
     // CG
-    float ri, alpha, beta, sum1, sum2, sum3 = 1, sum4;
+    float ri, alpha, beta, sum1, sum2, sum3 = 1.0f, sum4;
     float *r = cast(float*, malloc(nn*sizeof(float)));
     float *p = cast(float*, malloc(nn*sizeof(float)));
     float *u = cast(float*, malloc(nn*sizeof(float)));
 
     // Pré-condicionamento.
-    for (i = 0; i < nn; i++) {
-        ri = nodes[i].calc ? rsum[i] - dsum[i]*V[i] : 0.0;
-        p[i] = ri;
-        r[i] = ri;
+    for (i = 0; i < ng; i++) {
+        G = &groups[i];
+        for (j = 0; j < G->nn; j++) {
+            N = G->nodes[j];
+            ri = N.calc ? rsum[N.i] - dsum[N.i]*V[N.i] : 0.0f;
+            p[N.i] = ri;
+            r[N.i] = ri;
+        }
     }
 
     k = 1;
@@ -361,18 +377,28 @@ extern "C" int runCPU(int ne, int nn, int kmax, float errmin,
         for (i = 0; i < nn; i++)
             u[i] = 0.0;
 
-        for (i = 0; i < ne; i++) {
-            E = elements[i];
-            n1 = E.nodes[0]; n2 = E.nodes[1]; n3 = E.nodes[2];
+        for (i = 0; i < ng; i++) {
+            G = &groups[i];
+            for (j = 0; j < G->ne; j++) {
+                E = &G->elements[j];
+                integ_element(E);
 
-            u[n1] += E.matriz[0]*p[n1] + E.matriz[3]*p[n2] + E.matriz[4]*p[n3];
-            u[n2] += E.matriz[3]*p[n1] + E.matriz[1]*p[n2] + E.matriz[5]*p[n3];
-            u[n3] += E.matriz[4]*p[n1] + E.matriz[5]*p[n2] + E.matriz[2]*p[n3];
+                n1 = E->nodes[0]; n2 = E->nodes[1]; n3 = E->nodes[2];
+
+                u[n1] += E->matriz[0]*p[n1] + E->matriz[3]*p[n2] + E->matriz[4]*p[n3];
+                u[n2] += E->matriz[3]*p[n1] + E->matriz[1]*p[n2] + E->matriz[5]*p[n3];
+                u[n3] += E->matriz[4]*p[n1] + E->matriz[5]*p[n2] + E->matriz[2]*p[n3];
+            }
         }
 
-        for (i = 0; i < nn; i++)
-            if (!nodes[i].calc)
-                u[i] = p[i];
+        for (i = 0; i < ng; i++) {
+            G = &groups[i];
+            for (j = 0; j < G->nn; j++) {
+                N = G->nodes[j];
+                if (!N.calc)
+                    u[N.i] = p[N.i];
+            }
+        }
 
         sum1 = 0.0; sum2 = 0.0;
         for (i = 0; i < nn; i++) {
@@ -467,6 +493,7 @@ extern "C" int testeCG(int n, int kmax, float err, float* A, float* x,
     return k;
 }
 
+#if CUDA
 extern "C" float teste_sum_reduction(int size, float *a, float *b) {
     const dim3 threads(BSIZE);
     const dim3 blocks(1 + size/BSIZE);
@@ -487,3 +514,4 @@ extern "C" float teste_sum_reduction(int size, float *a, float *b) {
 
     return sum;
 }
+#endif
