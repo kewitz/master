@@ -143,8 +143,7 @@ class Mesh(object):
         # Map nodes and Elements.
         self.nodes = map(lambda x: Node(x), nodes)
         self.elements = map(lambda x: Element(x, nodes=self.nodes), elements)
-        # Verbosity...a1z2q3
-
+        # Verbosity
         if verbose:
             self.verbose = verbose
             print "Done parsing {0} nodes and {1} elements."\

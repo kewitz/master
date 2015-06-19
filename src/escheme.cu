@@ -34,7 +34,7 @@
 #define BSIZE 512
 #define putf(a, b) smemcpy(a, b, sizeof(float), cudaMemcpyHostToDevice);
 #define getf(a, b) smemcpy(a, b, sizeof(float), cudaMemcpyDeviceToHost);
-#define CUDA false
+#define CUDA true
 
 extern "C" unsigned int alloc(const int nn) {
     cudaDeviceProp prop = getInfo();
@@ -50,32 +50,32 @@ extern "C" unsigned int alloc(const int nn) {
 //    ne: número de elementos.
 //    elements: array de elementos da malha.
 //    elements: array de nós da malha.
-__global__ void kernel_integration(int ne, elementri *elements, node *nodes) {
+__global__ void kernel_integration(int ne, element *elements) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= ne) return;
 
-    elementri E = elements[i];
+    element *E = &elements[i];
 
     // Calcula argumentos necessários
     float J1, J2, J3, J4, dJ;
-    J1 = E.x[1] - E.x[0];
-    J2 = E.y[1] - E.y[0];
-    J3 = E.x[2] - E.x[0];
-    J4 = E.y[2] - E.y[0];
+    J1 = E->x[1] - E->x[0];
+    J2 = E->y[1] - E->y[0];
+    J3 = E->x[2] - E->x[0];
+    J4 = E->y[2] - E->y[0];
     dJ = 2*(J1*J4 - J3*J2);
 
     // Calcula a matriz de contribuições do elemento.
-    elements[i].matriz[0] = dJ != 0.0 ?
+    E->matriz[0] = dJ != 0.0 ?
         (powf(J2-J4, 2.0) + powf(J3-J1, 2.0))/dJ : 0.0;
-    elements[i].matriz[1] = dJ != 0.0 ?
+    E->matriz[1] = dJ != 0.0 ?
         (powf(J4, 2.0) + powf(J3, 2.0))/dJ : 0.0;
-    elements[i].matriz[2] = dJ != 0.0 ?
+    E->matriz[2] = dJ != 0.0 ?
         (powf(J2, 2.0) + powf(J1, 2.0))/dJ : 0.0;
-    elements[i].matriz[3] = dJ != 0.0 ?
+    E->matriz[3] = dJ != 0.0 ?
         ((J2-J4)*J4 - (J3-J1)*J3)/dJ : 0.0;
-    elements[i].matriz[4] = dJ != 0.0 ?
+    E->matriz[4] = dJ != 0.0 ?
         ((J3-J1)*J1 - (J2-J4)*J2)/dJ : 0.0;
-    elements[i].matriz[5] = dJ != 0.0 ?
+    E->matriz[5] = dJ != 0.0 ?
         (J4*-1*J2 - J3*J1)/dJ : 0.0;
 }
 
@@ -85,13 +85,13 @@ __global__ void kernel_integration(int ne, elementri *elements, node *nodes) {
 //    V: vetor de tensões dos nós.
 //    dsum: vetor diag_sum.
 //    rsum: vetor right_sum.
-__global__ void kernel_preprocess(int ne, elementri * elements, float * V,
-                                  float * dsum, float * rsum) {
+__global__ void kernel_preprocess(int ne, element *elements, float *V,
+    float *dsum, float *rsum) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= ne) return;
 
     int n1, n2, n3;
-    elementri E = elements[i];
+    element E = elements[i];
     n1 = E.nodes[0]; n2 = E.nodes[1]; n3 = E.nodes[2];
 
     atomicAdd(&dsum[n1], E.matriz[0]);
@@ -104,39 +104,44 @@ __global__ void kernel_preprocess(int ne, elementri * elements, float * V,
 }
 
 // Kernel de pré-condicionamento.
-__global__ void kernel_precond(int nn, node * nodes, float * dsum, float * rsum,
-                               float * R, float * P, float * V) {
+__global__ void kernel_precond(int nn, node *nodes, float *dsum, float *rsum,
+    float *R, float *P, float *V) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= nn) return;
 
-    float ri = nodes[i].calc ? rsum[i] - dsum[i]*V[i] : 0.0;
-    R[i] = ri;
-    P[i] = ri;
+    node N = nodes[i];
+
+    float ri = N.calc ? rsum[N.i] - dsum[N.i]*V[N.i] : 0.0;
+    R[N.i] = ri;
+    P[N.i] = ri;
 }
 
-__global__ void kernel_iter_element(int ne, elementri * elements, float * u,
-                                    float * p) {
+__global__ void kernel_iter_element(int ne, element *elements, float *U,
+    float *P) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= ne) return;
 
-    elementri E = elements[i];
+    element E = elements[i];
     int n1 = E.nodes[0], n2 = E.nodes[1], n3 = E.nodes[2];
 
-    atomicAdd(&u[n1], E.matriz[0]*p[n1] + E.matriz[3]*p[n2] +
-              E.matriz[4]*p[n3]);
-    atomicAdd(&u[n2], E.matriz[3]*p[n1] + E.matriz[1]*p[n2] +
-              E.matriz[5]*p[n3]);
-    atomicAdd(&u[n3], E.matriz[4]*p[n1] + E.matriz[5]*p[n2] +
-              E.matriz[2]*p[n3]);
+    atomicAdd(&U[n1], E.matriz[0]*P[n1] + E.matriz[3]*P[n2] +
+              E.matriz[4]*P[n3]);
+    atomicAdd(&U[n2], E.matriz[3]*P[n1] + E.matriz[1]*P[n2] +
+              E.matriz[5]*P[n3]);
+    atomicAdd(&U[n3], E.matriz[4]*P[n1] + E.matriz[5]*P[n2] +
+              E.matriz[2]*P[n3]);
 }
 
-__global__ void kernel_iter_element_fix(int nn, node *nodes, float *u,
-    float *p) {
+__global__ void kernel_iter_element_fix(int nn, node *nodes, float *U,
+    float *P) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
+
     if (i >= nn) return;
 
-    if (!nodes[i].calc)
-        u[i] = p[i];
+    node N = nodes[i];
+    if (!N.calc) {
+        U[N.i] = P[N.i];
+    }
 }
 
 // vec[i] = 0.0f
@@ -197,18 +202,15 @@ __global__ void kernel_util_addtovec2(int size, const float scalar, float *vecA,
 //    V: vetor de tensões dos nós.
 //    verbose: se 'true' imprime informações do algorítmo.
 //    bench: array de tempos de processamento para benchmarking.
-extern "C" int runGPU(int ne, int nn, int kmax, float errmin,
-                      elementri *elements, node *nodes, float *V, bool verbose,
-                      float *bench) {
+extern "C" int runGPU(int ng, int nn, int kmax, float errmin, group *groups,
+    float *V, bool verbose, float *bench) {
     clock_t t = clock();
-    int k = 1;
-    const dim3 threads(BSIZE);
-    const dim3 elementblocks(1 + ne/BSIZE);
-    const dim3 nodeblocks(1 + nn/BSIZE);
+    int i, k = 1;
+    unsigned int maxn = alloc(nn);
 
     // Array Sizes
-    size_t s_Elements = sizeof(elementri)*ne,
-           s_Nodes = sizeof(node)*nn,
+    size_t s_Elements = sizeof(element)*maxn*6,
+           s_Nodes = sizeof(node)*maxn,
            s_V = sizeof(float)*nn;
 
     // Scalars.
@@ -217,62 +219,87 @@ extern "C" int runGPU(int ne, int nn, int kmax, float errmin,
 
     // Device Arrays.
     float *_dsum, *_rsum, *_V, *_U, *_P, *_R;
+    group *G;
     node *_nodes;
-    elementri *_elements;
+    element *_elements;
     smalloc(&_dsum, s_V); smalloc(&_rsum, s_V);
     smalloc(&_elements, s_Elements); smalloc(&_nodes, s_Nodes);
     smalloc(&_sum1, sizeof(float)); smalloc(&_sum2, sizeof(float));
     smalloc(&_sum3, sizeof(float)); smalloc(&_sum4, sizeof(float));
     smalloc(&_V, s_V); smalloc(&_U, s_V); smalloc(&_P, s_V); smalloc(&_R, s_V);
 
-    smemcpy(_elements, elements, s_Elements, cudaMemcpyHostToDevice);
     smemcpy(_V, V, s_V, cudaMemcpyHostToDevice);
-    smemcpy(_nodes, nodes, s_Nodes, cudaMemcpyHostToDevice);
 
-    kernel_integration<<<elementblocks, threads>>>(ne, _elements, _nodes);
-    kernel_util_zero<<<nodeblocks, threads>>>(nn, _dsum);
-    kernel_util_zero<<<nodeblocks, threads>>>(nn, _rsum);
+    kernel_util_zero<<<(1+nn/BSIZE), BSIZE>>>(nn, _dsum);
+    kernel_util_zero<<<(1+nn/BSIZE), BSIZE>>>(nn, _rsum);
     cudaDeviceSynchronize();
-    kernel_preprocess<<<elementblocks, threads>>>(ne, _elements, _V, _dsum,
-        _rsum);
-    cudaDeviceSynchronize();
-    kernel_precond<<<nodeblocks, threads>>>(nn, _nodes, _dsum, _rsum, _R, _P,
-        _V);
+    for (i = 0; i < ng; i++) {
+        G = &groups[i];
+        smemcpy(_elements, G->elements, sizeof(element)*G->ne,
+            cudaMemcpyHostToDevice);
+        kernel_integration<<<(1+G->ne/BSIZE), BSIZE>>>(G->ne, _elements);
+        cudaDeviceSynchronize();
+        kernel_preprocess<<<(1+G->ne/BSIZE), BSIZE>>>(G->ne, _elements, _V,
+            _dsum, _rsum);
+        cudaDeviceSynchronize();
+    }
+    for (i = 0; i < ng; i++) {
+        G = &groups[i];
+        smemcpy(_nodes, G->nodes, sizeof(node)*G->nn, cudaMemcpyHostToDevice);
+        kernel_precond<<<(1+G->nn/BSIZE), BSIZE>>>(G->nn, _nodes, _dsum, _rsum,
+            _R, _P, _V);
+        cudaDeviceSynchronize();
+    }
 
     while (k < kmax && fabs(sqrt(sum3)) > errmin) {
         // U[] = 0
-        kernel_util_zero<<<nodeblocks, threads>>>(nn, _U);
+        kernel_util_zero<<<(1+nn/BSIZE), BSIZE>>>(nn, _U);
         cudaDeviceSynchronize();
-        kernel_iter_element<<<elementblocks, threads>>>(ne, _elements, _U, _P);
-        cudaDeviceSynchronize();
-        kernel_iter_element_fix<<<nodeblocks, threads>>>(nn, _nodes, _U, _P);
-        cudaDeviceSynchronize();
+        for (i = 0; i < ng; i++) {
+            G = &groups[i];
+            smemcpy(_elements, G->elements, sizeof(element)*G->ne,
+                cudaMemcpyHostToDevice);
+            kernel_integration<<<(1+G->ne/BSIZE), BSIZE>>>(G->ne, _elements);
+            cudaDeviceSynchronize();
+            kernel_iter_element<<<(1+G->ne/BSIZE), BSIZE>>>(G->ne, _elements,
+                _U, _P);
+            cudaDeviceSynchronize();
+        }
+        for (i = 0; i < ng; i++) {
+            G = &groups[i];
+            smemcpy(_nodes, G->nodes, sizeof(node)*G->nn,
+                cudaMemcpyHostToDevice);
+            kernel_iter_element_fix<<<(1+G->nn/BSIZE), BSIZE>>>(G->nn, _nodes,
+                _U, _P);
+            cudaDeviceSynchronize();
+        }
 
         sum1 = 0.0f; sum2 = 0.0f;
         putf(_sum1, &sum1); putf(_sum2, &sum2);
-        kernel_util_vecsummult<<<nodeblocks, threads>>>(nn, _P, _R, _sum1);
-        kernel_util_vecsummult<<<nodeblocks, threads>>>(nn, _P, _U, _sum2);
+        kernel_util_vecsummult<<<(1+nn/BSIZE), BSIZE>>>(nn, _P, _R, _sum1);
+        kernel_util_vecsummult<<<(1+nn/BSIZE), BSIZE>>>(nn, _P, _U, _sum2);
         cudaDeviceSynchronize();
         getf(&sum1, _sum1); getf(&sum2, _sum2);
 
         alpha = sum2 != 0.0 ? sum1/sum2 : 0.0;
-        kernel_util_addtovec<<<nodeblocks, threads>>>(nn, alpha, _V, _P);
-        kernel_util_addtovec<<<nodeblocks, threads>>>(nn, -alpha, _R, _U);
+        kernel_util_addtovec<<<(1+nn/BSIZE), BSIZE>>>(nn, alpha, _V, _P);
+        kernel_util_addtovec<<<(1+nn/BSIZE), BSIZE>>>(nn, -alpha, _R, _U);
         cudaDeviceSynchronize();
 
         sum3 = 0.0f; sum4 = 0.0f;
         putf(_sum3, &sum3); putf(_sum4, &sum4);
-        kernel_util_vecsummult<<<nodeblocks, threads>>>(nn, _R, _R, _sum3);
-        kernel_util_vecsummult<<<nodeblocks, threads>>>(nn, _R, _U, _sum4);
+        kernel_util_vecsummult<<<(1+nn/BSIZE), BSIZE>>>(nn, _R, _R, _sum3);
+        kernel_util_vecsummult<<<(1+nn/BSIZE), BSIZE>>>(nn, _R, _U, _sum4);
         cudaDeviceSynchronize();
         getf(&sum3, _sum3); getf(&sum4, _sum4);
 
         beta = sum2 != 0.0 ? -sum4/sum2 : 0.0;
-        kernel_util_addtovec2<<<nodeblocks, threads>>>(nn, beta, _P, _R, _P);
+        kernel_util_addtovec2<<<(1+nn/BSIZE), BSIZE>>>(nn, beta, _P, _R, _P);
         cudaDeviceSynchronize();
 
         k++;
     }
+
     smemcpy(V, _V, s_V, cudaMemcpyDeviceToHost);
 
     cudaFree(_sum1); cudaFree(_sum2); cudaFree(_sum3); cudaFree(_sum4);
@@ -319,9 +346,8 @@ void integ_element(element *E) {
 //    V: vetor de tensões dos nós.
 //    verbose: se 'true' imprime informações do algorítmo.
 //    bench: array de tempos de processamento para benchmarking.
-extern "C" int runCPU(int ng, int nn, int kmax, float errmin,
-                      group *groups, float *V, bool verbose,
-                      float *bench) {
+extern "C" int runCPU(int ng, int nn, int kmax, float errmin, group *groups,
+    float *V, bool verbose, float *bench) {
     clock_t t = clock();
     unsigned int i, j, k;
     element *E;
