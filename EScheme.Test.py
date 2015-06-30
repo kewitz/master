@@ -11,7 +11,7 @@ bound = {1: 100.0, 2: 66.0, 3: 33.0, 4: 0.0}
 for n in m.nodesOnLine([1, 2, 3, 4]):
     n.calc = False
 
-vc, ic, bc = m.run(cuda=True, boundary=bound, errmin=1E-8, maxiter=1000)
+vc, ic, bc = m.run(cuda=False, boundary=bound, errmin=1E-8, kmax=1000)
 print "Took %i iterations." % (ic)
 
 m.plotResult(result=vc)

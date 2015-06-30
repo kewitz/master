@@ -33,7 +33,6 @@ import matplotlib.tri as tri
 # Importa a biblioteca CUDA.
 lib = cdll.LoadLibrary('./escheme.so')
 lib.hello()
-eps = 8.854187E-12
 
 
 def timeit(t=False):
@@ -55,7 +54,8 @@ class _elementri(Structure):
     """Struct `element` utilizada pelo programa C."""
     _fields_ = [("nodes", c_uint*3),
                 ("matriz", c_float*6),
-                ("eps", c_float),
+                ("mat", c_float),
+                ("f", c_float),
                 ("x", c_float*3),
                 ("y", c_float*3)]
 
@@ -95,7 +95,8 @@ class Element(object):
         x = args[0]
         i, typ, ntags = x[:3]
         self.i, self.dim = int(i)-1, int(typ)
-        self.eps = eps
+        self.mat = 1.0
+        self.f = 0.0
         self.tags = [int(a) for a in x[3:3+int(ntags)]]
         # If supplied the node list make reference, else use only the index.
         if 'nodes' in kwargs:
@@ -113,7 +114,8 @@ class Element(object):
     def ctyped(self):
         """Retorna o Elemento em formato `Struct _elementri`."""
         r = _elementri()
-        r.eps = c_float(self.eps)
+        r.mat = c_float(self.mat)
+        r.f = c_float(self.f)
         for i, n in enumerate(self.nodes):
             r.nodes[i] = n.i
             r.x[i] = n.x
@@ -143,6 +145,8 @@ class Mesh(object):
         # Map nodes and Elements.
         self.nodes = map(lambda x: Node(x), nodes)
         self.elements = map(lambda x: Element(x, nodes=self.nodes), elements)
+        self.V = zeros(len(self.nodes), dtype=float32)
+        self.S = zeros(len(self.nodes), dtype=float32)
         # Verbosity
         if verbose:
             self.verbose = verbose
@@ -163,8 +167,16 @@ class Mesh(object):
         else:
             func = lib.runCPU
         ne, nn = len(self.elements), len(self.nodes)
-        V = zeros(nn, dtype=float32)
+        V = self.V
+        S = self.S
         bench = zeros(3, dtype=float32)
+
+        # Set up the boundary information.
+        if 'boundary' in kwargs:
+            for k in kwargs['boundary']:
+                for n in self.nodesOnLine(k):
+                    V[n.i] = kwargs['boundary'][k]
+                    n.calc = False
 
         limit = lib.alloc(nn)
         egs = split([e for e in self.elements], limit, 2)
@@ -192,15 +204,10 @@ class Mesh(object):
             groups[i] = _group(len(ng), len(eg), node_groups[i],
                                element_groups[i])
 
-        # Set up the boundary information.
-        if 'boundary' in kwargs:
-            for k in kwargs['boundary']:
-                for i in self.nodesOnLine(k, True):
-                    V[i] = kwargs['boundary'][k]
-
         # Check if it's CUDA capable.
         iters = func(len(egs), nn, kmax, c_float(errmin), groups,
-                     byref(ctypeslib.as_ctypes(V)), self.verbose,
+                     byref(ctypeslib.as_ctypes(V)),
+                     byref(ctypeslib.as_ctypes(S)), self.verbose,
                      byref(ctypeslib.as_ctypes(bench)))
         return V, iters, bench.tolist()
 
