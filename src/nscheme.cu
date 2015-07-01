@@ -96,7 +96,6 @@ __global__ void kernel_element(int ne, elementri *elements, float *S) {
     float mat = E->mat;
     float f = E->f;
 
-
     // Calcula argumentos necessários
     float J1, J2, J3, J4, dJ;
     J1 = E->x[1] - E->x[0];
@@ -283,25 +282,45 @@ extern "C" int streamGPU(int ng, int nn, int kmax, float R, float errmin,
 }
 
 void integ_element(elementri *E, float *S) {
-    float J1, J2, J3, J4, dJ, mat = E->mat, f = E->f;
-    J1 = E->x[1] - E->x[0];
-    J2 = E->y[1] - E->y[0];
-    J3 = E->x[2] - E->x[0];
-    J4 = E->y[2] - E->y[0];
-    dJ = 2*(J1*J4 - J3*J2);
-
+    float mat = E->mat, f = E->f;
+    // Calcula [J]
+    float J[2][2];
+    J[0][0] = E->x[1] - E->x[0];
+    J[0][1] = E->y[1] - E->y[0];
+    J[1][0] = E->x[2] - E->x[0];
+    J[1][1] = E->y[2] - E->y[0];
+    // Calcula |J|
+    float dJ = J[0][0]*J[1][1] - J[1][0]*J[1][1];
+    assert(!isnan(dJ));
+    // Calcula [J]^-1
+    float iJ[2][2];
+    iJ[0][0] = J[1][1]/dJ;
+    iJ[0][1] = -J[0][1]/dJ;
+    iJ[1][0] = -J[1][0]/dJ;
+    iJ[1][1] = J[0][0]/dJ;
+    if isnan(iJ[0][0]) iJ[0][0] = 0.0f;
+    if isnan(iJ[0][1]) iJ[0][1] = 0.0f;
+    if isnan(iJ[1][0]) iJ[1][0] = 0.0f;
+    if isnan(iJ[1][1]) iJ[1][1] = 0.0f;
+    // Calcula [J]^-1.GradN
+    float q1 = -iJ[0][0]+iJ[0][1], q2 = iJ[0][0], q3 = iJ[0][1];
+    float r1 = -iJ[1][0]+iJ[1][1], r2 = iJ[1][0], r3 = iJ[1][1];
+    assert(!isnan(q1) && !isnan(q2) && !isnan(q3));
+    assert(!isnan(r1) && !isnan(r2) && !isnan(r3));
     // Calcula a matriz de contribuições do elemento.
-    E->matriz[0] = (pow(J2-J4, 2) + pow(J3-J1, 2))*mat/dJ;   // C11
-    E->matriz[1] = (pow(J4, 2) + pow(J3, 2))*mat/dJ;         // C22
-    E->matriz[2] = (pow(J2, 2) + pow(J1, 2))*mat/dJ;         // C33
-    E->matriz[3] = ((J2-J4)*J4 - (J3-J1)*J3)*mat/dJ;         // C12 C21
-    E->matriz[4] = ((J2-J4)*-1*J2 + (J3-J1)*J1)*mat/dJ;      // C13 C31
-    E->matriz[5] = (J4*-1*J2 - J3*J1)*mat/dJ;                // C23 C32
+    E->matriz[0] = (q1*q1 + r1*r1)*mat/(dJ*2);
+    E->matriz[1] = (q2*q2 + r2*r2)*mat/(dJ*2);
+    E->matriz[2] = (q3*q3 + r3*r3)*mat/(dJ*2);
+    E->matriz[3] = (q1*q2 + r1*r2)*mat/(dJ*2);
+    E->matriz[4] = (q1*q3 + r1*r3)*mat/(dJ*2);
+    E->matriz[5] = (q2*q3 + r2*r3)*mat/(dJ*2);
 
-    f = f*dJ*0.5f*0.333333f;
-    S[E->nodes[0]] += f;
-    S[E->nodes[1]] += f;
-    S[E->nodes[2]] += f;
+    if (fabs(f) > 0) {
+        f = f*dJ*0.5f*0.333333f;
+        S[E->nodes[0]] += f;
+        S[E->nodes[1]] += f;
+        S[E->nodes[2]] += f;
+    }
 }
 
 void calc_node(node N, float errmin, float R, float *V, float *S,
@@ -332,7 +351,7 @@ void calc_node(node N, float errmin, float R, float *V, float *S,
     Vi = diag_sum == 0.0 ? 0.0 : right_sum/diag_sum;
     diff = Vi - Vo;
     Vi += R*diff;
-    *run |= (fabs(diff) > errmin*fabs(Vi));
+    *run |= (fabs(diff/Vi) > errmin);
     V[N.i] = Vi;
 }
 

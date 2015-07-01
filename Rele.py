@@ -17,7 +17,7 @@ for e in m.elementsByTag([24, 26]):
 for e in m.elementsByTag([22]):
     e.f = 2000000
 
-vc, ic, bc = m.run(cuda=True, boundary=bound, errmin=1E-4, kmax=4000)
+vc, ic, bc = m.run(cuda=False, boundary=bound, errmin=1E-5, kmax=10000)
 print "Took %i iterations." % (ic)
 
 m.plotResult(result=vc)
