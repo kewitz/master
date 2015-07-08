@@ -121,16 +121,15 @@ extern "C" unsigned int alloc(const int nn) {
 extern "C" int runGPU(int ng, int nn, int kmax, float R, float errmin,
     group *groups, float *V, bool verbose, float *bench) {
     // Inicia cronômetro do benchmark.
-    clock_t t = clock();
+    unsigned int maxn = alloc(nn);
     cudaDeviceReset();
+    clock_t t = clock();
     // Aloca variáveis.
     int k = 1, g, conv, *d_conv;
     float *d_V;
     group G;
     element *d_elements;
     node *d_nodes;
-
-    unsigned int maxn = alloc(nn);
 
     // Malloc e Memcpy de variáveis globais.
     smalloc(&d_V, sizeof(float)*nn);
@@ -166,6 +165,70 @@ extern "C" int runGPU(int ng, int nn, int kmax, float R, float errmin,
 
     smemcpy(V, d_V, sizeof(float)*nn, cudaMemcpyDeviceToHost);
     cudaDeviceSynchronize();
+
+    cudaFree(d_elements); cudaFree(d_nodes);
+    cudaFree(d_V); cudaFree(d_conv);
+
+    t = clock() - t;
+    bench[0] = cast(float, t)/CLOCKS_PER_SEC;
+    return k;
+}
+
+extern "C" int runGPUStream(int ng, int nn, int kmax, float R, float errmin,
+    group *groups, float *V, bool verbose, float *bench) {
+    // Inicia cronômetro do benchmark.
+    unsigned int maxn = alloc(nn);
+    cudaDeviceReset();
+    clock_t t = clock();
+    // Aloca variáveis.
+    int k = 1, g, conv, *d_conv;
+    float *d_V;
+    group G;
+    element *d_elements;
+    node *d_nodes;
+
+
+
+    // Malloc e Memcpy de variáveis globais.
+    smalloc(&d_V, sizeof(float)*nn);
+    smalloc(&d_conv, sizeof(int));
+    smalloc(&d_nodes, sizeof(node)*maxn);
+    smalloc(&d_elements, sizeof(element)*maxn*6);
+    smemcpy(d_V, V, sizeof(float)*nn, cudaMemcpyHostToDevice);
+
+    // Cria streams.
+    cudaStream_t stream[2];
+    for (int i = 0; i < 2; ++i)
+        cudaStreamCreate(&stream[i]);
+
+    // Iterações
+    conv = 1;
+    while (conv == 1 && k < kmax) {
+        conv = 0;
+        smemcpy(d_conv, &conv, sizeof(int), cudaMemcpyHostToDevice);
+        for (g = 0; g < ng; g++) {
+            G = groups[g];
+            cma(d_elements, G.elements, sizeof(element)*G.ne,
+                cudaMemcpyHostToDevice, stream[0]);
+            cma(d_nodes, G.nodes, sizeof(node)*G.nn,
+                cudaMemcpyHostToDevice, stream[1]);
+            kernel_element<<<(1 + G.ne/BSIZE), BSIZE, 0, stream[0]>>>(G.ne,
+                d_elements);
+            cudaDeviceSynchronize();
+            kernel_node<<<(1 + G.nn/BSIZE), BSIZE, 0, stream[0]>>>(G.nn,
+                errmin, R, d_elements, d_nodes, d_V, d_conv);
+            cudaDeviceSynchronize();
+        }
+        cudaDeviceSynchronize();
+        smemcpy(&conv, d_conv, sizeof(int), cudaMemcpyDeviceToHost);
+        k++;
+    }
+
+    smemcpy(V, d_V, sizeof(float)*nn, cudaMemcpyDeviceToHost);
+    cudaDeviceSynchronize();
+
+    for (int i = 0; i < 2; ++i)
+        cudaStreamDestroy(stream[i]);
 
     cudaFree(d_elements); cudaFree(d_nodes);
     cudaFree(d_V); cudaFree(d_conv);

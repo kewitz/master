@@ -182,7 +182,7 @@ class Mesh(object):
             func = lib.runGPU
         elif cuda is "stream":
             assert lib.getCUDAdevices() > 0, "No CUDA capable devices found."
-            func = lib.streamGPU
+            func = lib.runGPUStream
         else:
             func = lib.runCPU
         # Set up constants and other variables.
