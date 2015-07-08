@@ -28,6 +28,7 @@ typedef struct {
     // C11 C22 C33 C12 C13 C23
     float matriz[6];
     float mat;
+    float f;
     float x[3];
     float y[3];
 } element;

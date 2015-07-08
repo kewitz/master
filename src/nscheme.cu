@@ -102,6 +102,7 @@ __global__ void kernel_node(int nn, float errmin, float R, element *elements,
 
     Vi = right_sum/diag_sum;
     diff = Vi - Vo;
+    Vi += R*diff;
     c = (abs(diff/Vi) > errmin);
     atomicOr(conv, c);
     V[N.i] = Vi;
@@ -219,6 +220,7 @@ void calc_node(node N, float errmin, float R, float *V, element *elements,
 
     Vi = right_sum/diag_sum;
     diff = Vi - Vo;
+    Vi += R*diff;
     *run |= (fabs(diff/Vi) > errmin);
     V[N.i] = Vi;
 }
