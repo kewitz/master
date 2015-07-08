@@ -16,4 +16,4 @@ escheme:
 	$(CC) $(flags) -shared escheme.cu -lm -o ../escheme.so -lcuda $(gen)
 
 clean:
-	rm *.o *.so
+	rm ../*.so

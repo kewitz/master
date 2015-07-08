@@ -51,27 +51,26 @@ extern "C" unsigned int alloc(const int nn) {
 //    ne: número de elementos.
 //    elements: array de elementos da malha.
 //    elements: array de nós da malha.
-__global__ void kernel_integration(int ne, element *elements) {
+__global__ void kernel_element(int ne, element *elements) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= ne) return;
 
-    element *E = &elements[i];
+    element E = elements[i];
 
-    float mat = E->mat;
     // Calcula gradN
-    float q1 = E->y[1]-E->y[2], q2 = E->y[2]-E->y[0], q3 = E->y[0]-E->y[1];
-    float r1 = E->x[2]-E->x[1], r2 = E->x[0]-E->x[2], r3 = E->x[1]-E->x[0];
+    float q1 = E.y[1]-E.y[2], q2 = E.y[2]-E.y[0], q3 = E.y[0]-E.y[1];
+    float r1 = E.x[2]-E.x[1], r2 = E.x[0]-E.x[2], r3 = E.x[1]-E.x[0];
     // Calcula det(gradN)
-    float det = E->x[1]*E->y[2] + E->x[0]*E->y[1] + E->x[2]*E->y[0]
-              - E->x[0]*E->y[2] - E->x[2]*E->y[1] - E->x[1]*E->y[0];
-    float cof = (mat/det)/2.0;
+    float det = E.x[1]*E.y[2] + E.x[0]*E.y[1] + E.x[2]*E.y[0]
+              - E.x[0]*E.y[2] - E.x[2]*E.y[1] - E.x[1]*E.y[0];
+    float cof = (E.mat/det)/2;
     // Calcula a matriz de contribuições do elemento.
-    E->matriz[0] = (q1*q1 + r1*r1)*cof;
-    E->matriz[1] = (q2*q2 + r2*r2)*cof;
-    E->matriz[2] = (q3*q3 + r3*r3)*cof;
-    E->matriz[3] = (q1*q2 + r1*r2)*cof;
-    E->matriz[4] = (q1*q3 + r1*r3)*cof;
-    E->matriz[5] = (q2*q3 + r2*r3)*cof;
+    elements[i].matriz[0] = (q1*q1 + r1*r1)*cof;
+    elements[i].matriz[1] = (q2*q2 + r2*r2)*cof;
+    elements[i].matriz[2] = (q3*q3 + r3*r3)*cof;
+    elements[i].matriz[3] = (q1*q2 + r1*r2)*cof;
+    elements[i].matriz[4] = (q1*q3 + r1*r3)*cof;
+    elements[i].matriz[5] = (q2*q3 + r2*r3)*cof;
 }
 
 // Kernel de pré-processamento responsável por calcular diag_sum e right_sum.
@@ -232,7 +231,7 @@ extern "C" int runGPU(int ng, int nn, int kmax, float errmin, group *groups,
         G = &groups[i];
         smemcpy(_elements, G->elements, sizeof(element)*G->ne,
             cudaMemcpyHostToDevice);
-        kernel_integration<<<(1+G->ne/BSIZE), BSIZE>>>(G->ne, _elements);
+        kernel_element<<<(1+G->ne/BSIZE), BSIZE>>>(G->ne, _elements);
         cudaDeviceSynchronize();
         kernel_preprocess<<<(1+G->ne/BSIZE), BSIZE>>>(G->ne, _elements, _V,
             _dsum, _rsum);
@@ -254,7 +253,7 @@ extern "C" int runGPU(int ng, int nn, int kmax, float errmin, group *groups,
             G = &groups[i];
             smemcpy(_elements, G->elements, sizeof(element)*G->ne,
                 cudaMemcpyHostToDevice);
-            kernel_integration<<<(1+G->ne/BSIZE), BSIZE>>>(G->ne, _elements);
+            kernel_element<<<(1+G->ne/BSIZE), BSIZE>>>(G->ne, _elements);
             cudaDeviceSynchronize();
             kernel_iter_element<<<(1+G->ne/BSIZE), BSIZE>>>(G->ne, _elements,
                 _U, _P);
@@ -317,10 +316,12 @@ void integ_element(element *E) {
     float det = E->x[1]*E->y[2] + E->x[0]*E->y[1] + E->x[2]*E->y[0]
               - E->x[0]*E->y[2] - E->x[2]*E->y[1] - E->x[1]*E->y[0];
     float cof = (mat/det)/2.0;
+    assert(!isnan(det));
+    assert(!isnan(cof));
     // Calcula a matriz de contribuições do elemento.
-    E->matriz[0] = (q1*q1 + r1*r1)*cof;
-    E->matriz[1] = (q2*q2 + r2*r2)*cof;
-    E->matriz[2] = (q3*q3 + r3*r3)*cof;
+    E->matriz[0] = (powf(q1, 2.0) + powf(r1, 2.0))*cof;
+    E->matriz[1] = (powf(q2, 2.0) + powf(r2, 2.0))*cof;
+    E->matriz[2] = (powf(q3, 2.0) + powf(r3, 2.0))*cof;
     E->matriz[3] = (q1*q2 + r1*r2)*cof;
     E->matriz[4] = (q1*q3 + r1*r3)*cof;
     E->matriz[5] = (q2*q3 + r2*r3)*cof;
@@ -400,7 +401,6 @@ extern "C" int runCPU(int ng, int nn, int kmax, float errmin, group *groups,
                 integ_element(E);
 
                 n1 = E->nodes[0]; n2 = E->nodes[1]; n3 = E->nodes[2];
-
                 u[n1] += E->matriz[0]*p[n1] + E->matriz[3]*p[n2]
                          + E->matriz[4]*p[n3];
                 u[n2] += E->matriz[3]*p[n1] + E->matriz[1]*p[n2]
@@ -408,10 +408,6 @@ extern "C" int runCPU(int ng, int nn, int kmax, float errmin, group *groups,
                 u[n3] += E->matriz[4]*p[n1] + E->matriz[5]*p[n2]
                          + E->matriz[2]*p[n3];
             }
-        }
-
-        for (i = 0; i < ng; i++) {
-            G = &groups[i];
             for (j = 0; j < G->nn; j++) {
                 N = G->nodes[j];
                 if (!N.calc)
@@ -425,7 +421,7 @@ extern "C" int runCPU(int ng, int nn, int kmax, float errmin, group *groups,
             sum2 += p[i]*u[i];
         }
 
-        alpha = sum2 > 0 ? sum1/sum2 : 0.0f;
+        alpha = sum2 != 0.0 ? sum1/sum2 : 0.0;
         for (i = 0; i < nn; i++) {
             V[i] += alpha*p[i];
             r[i] -= alpha*u[i];
@@ -437,7 +433,7 @@ extern "C" int runCPU(int ng, int nn, int kmax, float errmin, group *groups,
             sum4 += r[i]*u[i];
         }
 
-        beta = sum2 > 0 ? -sum4/sum2 : 0.0f;
+        beta = sum2 != 0.0 ? -sum4/sum2 : 0.0f;
         for (i = 0; i < nn; i++) {
             p[i] = r[i] + beta*p[i];
         }

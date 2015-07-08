@@ -48,11 +48,11 @@ __global__ void kernel_util_zero(int nn, node *nodes, float *vec) {
 
 // Kernel de pre-processamento responsável por calcular as matrizes de contribu-
 // ição de todos os elementos.
-__global__ void kernel_element(int ne, elementri *elements) {
+__global__ void kernel_element(int ne, element *elements) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= ne) return;
 
-    elementri E = elements[i];
+    element E = elements[i];
 
     // Calcula gradN
     float q1 = E.y[1]-E.y[2], q2 = E.y[2]-E.y[0], q3 = E.y[0]-E.y[1];
@@ -71,7 +71,7 @@ __global__ void kernel_element(int ne, elementri *elements) {
 }
 
 // Kernel responsável por uma iteração.
-__global__ void kernel_node(int nn, float errmin, float R, elementri *elements,
+__global__ void kernel_node(int nn, float errmin, float R, element *elements,
     node *nodes, float *V, int *conv) {
 
     int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -81,7 +81,7 @@ __global__ void kernel_node(int nn, float errmin, float R, elementri *elements,
 
     int e, c;
     float diag_sum = 0.0f, right_sum = 0.0f, Vo = V[N.i], Vi, diff;
-    elementri E;
+    element E;
 
     for (e = 0; e < N.ne; e++) {
         E = elements[N.elements[e]];
@@ -112,7 +112,7 @@ extern "C" unsigned int alloc(const int nn) {
     cudaDeviceProp prop = getInfo();
     unsigned int gm = prop.totalGlobalMem*.9 - sizeof(float)*nn*2;
     cudaDeviceReset();
-    return cast(unsigned int, gm / (sizeof(node) + 6*sizeof(elementri)));
+    return cast(unsigned int, gm / (sizeof(node) + 6*sizeof(element)));
 }
 
 // Função externa que processa o problema, responsável por alocar a memória no
@@ -126,7 +126,7 @@ extern "C" int runGPU(int ng, int nn, int kmax, float R, float errmin,
     int k = 1, g, conv, *d_conv;
     float *d_V;
     group G;
-    elementri *d_elements;
+    element *d_elements;
     node *d_nodes;
 
     unsigned int maxn = alloc(nn);
@@ -135,7 +135,7 @@ extern "C" int runGPU(int ng, int nn, int kmax, float R, float errmin,
     smalloc(&d_V, sizeof(float)*nn);
     smalloc(&d_conv, sizeof(int));
     smalloc(&d_nodes, sizeof(node)*maxn);
-    smalloc(&d_elements, sizeof(elementri)*maxn*6);
+    smalloc(&d_elements, sizeof(element)*maxn*6);
     smemcpy(d_V, V, sizeof(float)*nn, cudaMemcpyHostToDevice);
 
     // Iterações
@@ -149,7 +149,7 @@ extern "C" int runGPU(int ng, int nn, int kmax, float R, float errmin,
             smemcpy(d_nodes, G.nodes, sizeof(node)*G.nn,
                 cudaMemcpyHostToDevice);
             // Memcpy e processamento dos elementos.
-            smemcpy(d_elements, G.elements, sizeof(elementri)*G.ne,
+            smemcpy(d_elements, G.elements, sizeof(element)*G.ne,
                 cudaMemcpyHostToDevice);
             cudaDeviceSynchronize();
             kernel_element<<<(1 + G.ne/BSIZE), BSIZE>>>(G.ne, d_elements);
@@ -174,7 +174,7 @@ extern "C" int runGPU(int ng, int nn, int kmax, float R, float errmin,
     return k;
 }
 
-void integ_element(elementri *E) {
+void integ_element(element *E) {
     float mat = E->mat;
     // Calcula gradN
     float q1 = E->y[1]-E->y[2], q2 = E->y[2]-E->y[0], q3 = E->y[0]-E->y[1];
@@ -192,11 +192,11 @@ void integ_element(elementri *E) {
     E->matriz[5] = (q2*q3 + r2*r3)*cof;
 }
 
-void calc_node(node N, float errmin, float R, float *V, elementri *elements,
+void calc_node(node N, float errmin, float R, float *V, element *elements,
     bool *run) {
     int e;
     float diag_sum = 0.0f, right_sum = 0.0f, Vo = V[N.i], Vi, diff;
-    elementri E;
+    element E;
 
     for (e = 0; e < N.ne; e++) {
         E = elements[N.elements[e]];

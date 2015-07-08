@@ -240,7 +240,7 @@ class Mesh(object):
                 if len(set(e.nodes).intersection(nodes)) > 0]
 
     def getNodes(self, elements):
-        return list(set([n for e in elements for n in e.nodes if n.calc]))
+        return list(set([n for e in elements for n in e.nodes]))
 
     def elementsByTag(self, tags):
         """Return elements tagged by `tag`."""

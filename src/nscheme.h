@@ -30,7 +30,7 @@ typedef struct {
     float mat;
     float x[3];
     float y[3];
-} elementri;
+} element;
 
 typedef struct {
     unsigned int i;
@@ -47,5 +47,5 @@ typedef struct {
     unsigned int nn;
     unsigned int ne;
     node *nodes;
-    elementri *elements;
+    element *elements;
 } group;

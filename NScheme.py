@@ -52,7 +52,7 @@ def split(array, limit, minStacks=False):
     return r
 
 
-class _elementri(Structure):
+class _element(Structure):
     """Struct `element` utilizada pelo programa C."""
     _fields_ = [("nodes", c_uint*3),
                 ("matriz", c_float*6),
@@ -71,14 +71,14 @@ class _node(Structure):
 class _color(Structure):
     """Struct `color` utilizada pelo programa C."""
     _fields_ = [("len", c_uint),
-                ("nodes", POINTER(_elementri))]
+                ("nodes", POINTER(_element))]
 
 
 class _group(Structure):
     _fields_ = [("nn", c_uint),
                 ("ne", c_uint),
                 ("nodes", POINTER(_node)),
-                ("elements", POINTER(_elementri))]
+                ("elements", POINTER(_element))]
 
 
 class Node(object):
@@ -125,8 +125,8 @@ class Element(object):
 
     @property
     def ctyped(self):
-        """Retorna o Elemento em formato `Struct _elementri`."""
-        r = _elementri()
+        """Retorna o Elemento em formato `Struct _element`."""
+        r = _element()
         r.mat = c_float(self.mat)
         for i, n in enumerate(self.nodes):
             r.nodes[i] = n.i
@@ -209,7 +209,7 @@ class Mesh(object):
         for i, ng in enumerate(ngs):
             # Process elements
             eg = self.getElements(ng)
-            c_elements = _elementri * len(eg)
+            c_elements = _element * len(eg)
             elements = c_elements()
             for j, e in enumerate(eg):
                 elements[j] = e.ctyped

@@ -9,4 +9,5 @@ m = ns.Mesh(file=path + "microstrip.msh", verbose=False)
 bound = {1: 0.0, 2: 0.0, 9: 0.0, 10: 0.0, 5: 5.0}
 
 vc, ic, bc = m.run(cuda=False, boundary=bound, errmin=1E-6, kmax=10000)
+vg, ig, bg = m.run(cuda=True, coloring=True, boundary=bound, errmin=1E-6, kmax=10000)
 m.plotResult(vc)
