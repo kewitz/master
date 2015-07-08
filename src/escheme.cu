@@ -51,13 +51,13 @@ extern "C" unsigned int alloc(const int nn) {
 //    ne: número de elementos.
 //    elements: array de elementos da malha.
 //    elements: array de nós da malha.
-__global__ void kernel_integration(int ne, element *elements, float *S) {
+__global__ void kernel_integration(int ne, element *elements) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= ne) return;
 
     element *E = &elements[i];
 
-    float mat = E->mat, f = E->f;
+    float mat = E->mat;
     // Calcula gradN
     float q1 = E->y[1]-E->y[2], q2 = E->y[2]-E->y[0], q3 = E->y[0]-E->y[1];
     float r1 = E->x[2]-E->x[1], r2 = E->x[0]-E->x[2], r3 = E->x[1]-E->x[0];
@@ -72,12 +72,6 @@ __global__ void kernel_integration(int ne, element *elements, float *S) {
     E->matriz[3] = (q1*q2 + r1*r2)*cof;
     E->matriz[4] = (q1*q3 + r1*r3)*cof;
     E->matriz[5] = (q2*q3 + r2*r3)*cof;
-
-    f = f*(det/6.0);
-
-    S[E->nodes[0]] += f;
-    S[E->nodes[1]] += f;
-    S[E->nodes[2]] += f;
 }
 
 // Kernel de pré-processamento responsável por calcular diag_sum e right_sum.
@@ -86,7 +80,7 @@ __global__ void kernel_integration(int ne, element *elements, float *S) {
 //    V: vetor de tensões dos nós.
 //    dsum: vetor diag_sum.
 //    rsum: vetor right_sum.
-__global__ void kernel_preprocess(int ne, element *elements, float *V, float *S,
+__global__ void kernel_preprocess(int ne, element *elements, float *V,
     float *dsum, float *rsum) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= ne) return;
@@ -106,13 +100,13 @@ __global__ void kernel_preprocess(int ne, element *elements, float *V, float *S,
 
 // Kernel de pré-condicionamento.
 __global__ void kernel_precond(int nn, node *nodes, float *dsum, float *rsum,
-    float *R, float *P, float *V, float *S) {
+    float *R, float *P, float *V) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= nn) return;
 
     node N = nodes[i];
 
-    float ri = N.calc ? S[N.i] + rsum[N.i] - dsum[N.i]*V[N.i] : 0.0;
+    float ri = N.calc ? rsum[N.i] - dsum[N.i]*V[N.i] : 0.0;
     R[N.i] = ri;
     P[N.i] = ri;
 }
@@ -134,7 +128,7 @@ __global__ void kernel_iter_element(int ne, element *elements, float *U,
 }
 
 __global__ void kernel_iter_element_fix(int nn, node *nodes, float *U,
-    float *P, float *S) {
+    float *P) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
 
     if (i >= nn) return;
@@ -143,9 +137,6 @@ __global__ void kernel_iter_element_fix(int nn, node *nodes, float *U,
     if (!N.calc) {
         U[N.i] = P[N.i];
     }
-    // else {
-        // U[N.i] += S[N.i];
-    // }
 }
 
 // vec[i] = 0.0f
@@ -207,7 +198,7 @@ __global__ void kernel_util_addtovec2(int size, const float scalar, float *vecA,
 //    verbose: se 'true' imprime informações do algorítmo.
 //    bench: array de tempos de processamento para benchmarking.
 extern "C" int runGPU(int ng, int nn, int kmax, float errmin, group *groups,
-    float *V, float *S, bool verbose, float *bench) {
+    float *V, bool verbose, float *bench) {
     clock_t t = clock();
     int i, k = 1;
     unsigned int maxn = alloc(nn);
@@ -222,7 +213,7 @@ extern "C" int runGPU(int ng, int nn, int kmax, float errmin, group *groups,
           beta = 0.0f, *_sum1, *_sum2, *_sum3, *_sum4;
 
     // Device Arrays.
-    float *_dsum, *_rsum, *_V, *_S, *_U, *_P, *_R;
+    float *_dsum, *_rsum, *_V, *_U, *_P, *_R;
     group *G;
     node *_nodes;
     element *_elements;
@@ -230,22 +221,20 @@ extern "C" int runGPU(int ng, int nn, int kmax, float errmin, group *groups,
     smalloc(&_elements, s_Elements); smalloc(&_nodes, s_Nodes);
     smalloc(&_sum1, sizeof(float)); smalloc(&_sum2, sizeof(float));
     smalloc(&_sum3, sizeof(float)); smalloc(&_sum4, sizeof(float));
-    smalloc(&_S, s_V); smalloc(&_V, s_V); smalloc(&_U, s_V); smalloc(&_P, s_V);
-    smalloc(&_R, s_V);
+    smalloc(&_V, s_V); smalloc(&_U, s_V); smalloc(&_P, s_V); smalloc(&_R, s_V);
 
     smemcpy(_V, V, s_V, cudaMemcpyHostToDevice);
 
     kernel_util_zero<<<(1+nn/BSIZE), BSIZE>>>(nn, _dsum);
     kernel_util_zero<<<(1+nn/BSIZE), BSIZE>>>(nn, _rsum);
-    kernel_util_zero<<<(1+nn/BSIZE), BSIZE>>>(nn, _S);
     cudaDeviceSynchronize();
     for (i = 0; i < ng; i++) {
         G = &groups[i];
         smemcpy(_elements, G->elements, sizeof(element)*G->ne,
             cudaMemcpyHostToDevice);
-        kernel_integration<<<(1+G->ne/BSIZE), BSIZE>>>(G->ne, _elements, _S);
+        kernel_integration<<<(1+G->ne/BSIZE), BSIZE>>>(G->ne, _elements);
         cudaDeviceSynchronize();
-        kernel_preprocess<<<(1+G->ne/BSIZE), BSIZE>>>(G->ne, _elements, _V, _S,
+        kernel_preprocess<<<(1+G->ne/BSIZE), BSIZE>>>(G->ne, _elements, _V,
             _dsum, _rsum);
         cudaDeviceSynchronize();
     }
@@ -253,21 +242,19 @@ extern "C" int runGPU(int ng, int nn, int kmax, float errmin, group *groups,
         G = &groups[i];
         smemcpy(_nodes, G->nodes, sizeof(node)*G->nn, cudaMemcpyHostToDevice);
         kernel_precond<<<(1+G->nn/BSIZE), BSIZE>>>(G->nn, _nodes, _dsum, _rsum,
-            _R, _P, _V, _S);
+            _R, _P, _V);
         cudaDeviceSynchronize();
     }
 
     while (k < kmax && fabs(sqrt(sum3)) > errmin) {
         // U[] = 0
         kernel_util_zero<<<(1+nn/BSIZE), BSIZE>>>(nn, _U);
-        kernel_util_zero<<<(1+nn/BSIZE), BSIZE>>>(nn, _S);
         cudaDeviceSynchronize();
         for (i = 0; i < ng; i++) {
             G = &groups[i];
             smemcpy(_elements, G->elements, sizeof(element)*G->ne,
                 cudaMemcpyHostToDevice);
-            kernel_integration<<<(1+G->ne/BSIZE), BSIZE>>>(G->ne, _elements,
-                _rsum);
+            kernel_integration<<<(1+G->ne/BSIZE), BSIZE>>>(G->ne, _elements);
             cudaDeviceSynchronize();
             kernel_iter_element<<<(1+G->ne/BSIZE), BSIZE>>>(G->ne, _elements,
                 _U, _P);
@@ -278,7 +265,7 @@ extern "C" int runGPU(int ng, int nn, int kmax, float errmin, group *groups,
             smemcpy(_nodes, G->nodes, sizeof(node)*G->nn,
                 cudaMemcpyHostToDevice);
             kernel_iter_element_fix<<<(1+G->nn/BSIZE), BSIZE>>>(G->nn, _nodes,
-                _U, _P, _S);
+                _U, _P);
             cudaDeviceSynchronize();
         }
 
@@ -310,7 +297,7 @@ extern "C" int runGPU(int ng, int nn, int kmax, float errmin, group *groups,
 
     smemcpy(V, _V, s_V, cudaMemcpyDeviceToHost);
 
-    cudaFree(_V); cudaFree(_S); cudaFree(_U); cudaFree(_P); cudaFree(_R);
+    cudaFree(_V); cudaFree(_U); cudaFree(_P); cudaFree(_R);
     cudaFree(_sum1); cudaFree(_sum2); cudaFree(_sum3); cudaFree(_sum4);
     cudaFree(_elements); cudaFree(_nodes);
     cudaFree(_dsum); cudaFree(_rsum);
@@ -321,8 +308,8 @@ extern "C" int runGPU(int ng, int nn, int kmax, float errmin, group *groups,
 }
 #endif
 
-void integ_element(element *E, float *S) {
-    float mat = E->mat, f = E->f;
+void integ_element(element *E) {
+    float mat = E->mat;
     // Calcula gradN
     float q1 = E->y[1]-E->y[2], q2 = E->y[2]-E->y[0], q3 = E->y[0]-E->y[1];
     float r1 = E->x[2]-E->x[1], r2 = E->x[0]-E->x[2], r3 = E->x[1]-E->x[0];
@@ -337,11 +324,6 @@ void integ_element(element *E, float *S) {
     E->matriz[3] = (q1*q2 + r1*r2)*cof;
     E->matriz[4] = (q1*q3 + r1*r3)*cof;
     E->matriz[5] = (q2*q3 + r2*r3)*cof;
-
-    f = f*(det/6.0);
-    S[E->nodes[0]] += f;
-    S[E->nodes[1]] += f;
-    S[E->nodes[2]] += f;
 }
 // Função externa que processa o problema no CPU.
 //    ne: número de elementos.
@@ -354,7 +336,7 @@ void integ_element(element *E, float *S) {
 //    verbose: se 'true' imprime informações do algorítmo.
 //    bench: array de tempos de processamento para benchmarking.
 extern "C" int runCPU(int ng, int nn, int kmax, float errmin, group *groups,
-    float *V, float *S, bool verbose, float *bench) {
+    float *V, bool verbose, float *bench) {
     clock_t t = clock();
     unsigned int i, j, k;
     element *E;
@@ -369,13 +351,12 @@ extern "C" int runCPU(int ng, int nn, int kmax, float errmin, group *groups,
     for (i = 0; i < nn; i++) {
         rsum[i] = 0.0f;
         dsum[i] = 0.0f;
-        S[i] = 0.0f;
     }
     for (i = 0; i < ng; i++) {
         G = &groups[i];
         for (j = 0; j < G->ne; j++) {
             E = &G->elements[j];
-            integ_element(E, S);
+            integ_element(E);
 
             n1 = E->nodes[0]; n2 = E->nodes[1]; n3 = E->nodes[2];
 
@@ -400,7 +381,7 @@ extern "C" int runCPU(int ng, int nn, int kmax, float errmin, group *groups,
         G = &groups[i];
         for (j = 0; j < G->nn; j++) {
             N = G->nodes[j];
-            ri = N.calc ? S[N.i] + rsum[N.i] - dsum[N.i]*V[N.i] : 0.0f;
+            ri = N.calc ? rsum[N.i] - dsum[N.i]*V[N.i] : 0.0f;
             r[N.i] = ri;
             p[N.i] = ri;
         }
@@ -410,17 +391,13 @@ extern "C" int runCPU(int ng, int nn, int kmax, float errmin, group *groups,
     while (k < kmax && fabs(sqrt(sum3)) > errmin) {
         for (i = 0; i < nn; i++) {
             u[i] = 0.0;
-            S[i] = 0.0;
         }
 
         for (i = 0; i < ng; i++) {
             G = &groups[i];
             for (j = 0; j < G->ne; j++) {
                 E = &G->elements[j];
-                integ_element(E, S);
-            }
-            for (j = 0; j < G->ne; j++) {
-                E = &G->elements[j];
+                integ_element(E);
 
                 n1 = E->nodes[0]; n2 = E->nodes[1]; n3 = E->nodes[2];
 
@@ -448,8 +425,7 @@ extern "C" int runCPU(int ng, int nn, int kmax, float errmin, group *groups,
             sum2 += p[i]*u[i];
         }
 
-        alpha = sum1/sum2;
-        assert(!isnan(alpha));
+        alpha = sum2 > 0 ? sum1/sum2 : 0.0f;
         for (i = 0; i < nn; i++) {
             V[i] += alpha*p[i];
             r[i] -= alpha*u[i];
@@ -461,8 +437,7 @@ extern "C" int runCPU(int ng, int nn, int kmax, float errmin, group *groups,
             sum4 += r[i]*u[i];
         }
 
-        beta = -sum4/sum2;
-        assert(!isnan(alpha));
+        beta = sum2 > 0 ? -sum4/sum2 : 0.0f;
         for (i = 0; i < nn; i++) {
             p[i] = r[i] + beta*p[i];
         }
@@ -480,83 +455,3 @@ extern "C" int runCPU(int ng, int nn, int kmax, float errmin, group *groups,
     bench[0] = cast(float, t)/CLOCKS_PER_SEC;
     return k;
 }
-
-// Sadiku's Numerical Techniques in Electromagnetics. pg.712
-extern "C" int testeCG(int n, int kmax, float err, float* A, float* x,
-                       float* b) {
-    int i, j, k = 1;
-    float alpha, beta, sum1, sum2, sum3 = 1.0f, sum4;
-    float *r = cast(float*, malloc(n*sizeof(float)));
-    float *p = cast(float*, malloc(n*sizeof(float)));
-    float *u = cast(float*, malloc(n*sizeof(float)));
-
-    for (i = 0; i < n; i++) {
-        p[i] = b[i];
-        r[i] = b[i];
-    }
-
-    while (k < kmax && fabs(sqrt(sum3)) > err) {
-        for (j = 0; j < n; j++) {
-            u[j] = 0.0;
-            for (i = 0; i < n; i++)
-                u[j] += A[i*n + j]*p[i];
-        }
-
-        sum1 = 0.0f; sum2 = 0.0f;
-        for (i = 0; i < n; i++) {
-            sum1 += p[i]*r[i];
-            sum2 += p[i]*u[i];
-        }
-
-        alpha = sum2 != 0.0f ? sum1/sum2 : 0.0f;
-        alpha = isnan(alpha) ? 0.0f : alpha;
-
-        for (i = 0; i < n; i++) {
-            x[i] += alpha*p[i];
-            r[i] -= alpha*u[i];
-        }
-
-        sum3 = 0.0; sum4 = 0.0;
-        for (i = 0; i < n; i++) {
-            sum3 += r[i]*r[i];
-            sum4 += r[i]*u[i];
-        }
-
-        beta = sum2 != 0.0 ? -sum4/sum2 : 0.0;
-
-        for (i = 0; i < n; i++) {
-            p[i] = r[i] + beta*p[i];
-        }
-
-        k++;
-    }
-
-    free(r);
-    free(p);
-    free(u);
-
-    return k;
-}
-
-#if CUDA
-extern "C" float teste_sum_reduction(int size, float *a, float *b) {
-    const dim3 threads(BSIZE);
-    const dim3 blocks(1 + size/BSIZE);
-
-    float *_a, *_b, *_sum, sum = 0;
-    smalloc(&_a, sizeof(float)*size);
-    smalloc(&_b, sizeof(float)*size);
-    smalloc(&_sum, sizeof(float));
-
-    smemcpy(_a, a, sizeof(float)*size, cudaMemcpyHostToDevice);
-    smemcpy(_b, b, sizeof(float)*size, cudaMemcpyHostToDevice);
-    smemcpy(_sum, &sum, sizeof(float), cudaMemcpyHostToDevice);
-
-    kernel_util_vecsummult<<<blocks, threads>>>(size, _a, _b, _sum);
-    cudaDeviceSynchronize();
-    smemcpy(&sum, _sum, sizeof(float), cudaMemcpyDeviceToHost);
-    cudaDeviceSynchronize();
-
-    return sum;
-}
-#endif

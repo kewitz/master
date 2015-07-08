@@ -55,7 +55,6 @@ class _elementri(Structure):
     _fields_ = [("nodes", c_uint*3),
                 ("matriz", c_float*6),
                 ("mat", c_float),
-                ("f", c_float),
                 ("x", c_float*3),
                 ("y", c_float*3)]
 
@@ -96,7 +95,6 @@ class Element(object):
         i, typ, ntags = x[:3]
         self.i, self.dim = int(i)-1, int(typ)
         self.mat = 1.0
-        self.f = 0.0
         self.tags = [int(a) for a in x[3:3+int(ntags)]]
         # If supplied the node list make reference, else use only the index.
         if 'nodes' in kwargs:
@@ -115,7 +113,6 @@ class Element(object):
         """Retorna o Elemento em formato `Struct _elementri`."""
         r = _elementri()
         r.mat = c_float(self.mat)
-        r.f = c_float(self.f)
         for i, n in enumerate(self.nodes):
             r.nodes[i] = n.i
             r.x[i] = n.x
@@ -145,8 +142,6 @@ class Mesh(object):
         # Map nodes and Elements.
         self.nodes = map(lambda x: Node(x), nodes)
         self.elements = map(lambda x: Element(x, nodes=self.nodes), elements)
-        self.V = zeros(len(self.nodes), dtype=float32)
-        self.S = zeros(len(self.nodes), dtype=float32)
         # Verbosity
         if verbose:
             self.verbose = verbose
@@ -168,8 +163,7 @@ class Mesh(object):
         else:
             func = lib.runCPU
         ne, nn = len(self.elements), len(self.nodes)
-        V = self.V
-        S = self.S
+        V = zeros(len(self.nodes), dtype=float32)
         bench = zeros(3, dtype=float32)
 
         # Set up the boundary information.
@@ -209,8 +203,7 @@ class Mesh(object):
 
         # Check if it's CUDA capable.
         iters = func(len(egs), nn, kmax, c_float(errmin), groups,
-                     byref(ctypeslib.as_ctypes(V)),
-                     byref(ctypeslib.as_ctypes(S)), self.verbose,
+                     byref(ctypeslib.as_ctypes(V)), self.verbose,
                      byref(ctypeslib.as_ctypes(bench)))
         return V, iters, bench.tolist()
 
