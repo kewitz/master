@@ -57,7 +57,6 @@ class _elementri(Structure):
     _fields_ = [("nodes", c_uint*3),
                 ("matriz", c_float*6),
                 ("mat", c_float),
-                ("f", c_float),
                 ("x", c_float*3),
                 ("y", c_float*3)]
 
@@ -109,7 +108,6 @@ class Element(object):
         i, typ, ntags = x[:3]
         self.i, self.dim = int(i)-1, int(typ)
         self.mat = 1.0
-        self.f = 0.0
         self.tags = [int(a) for a in x[3:3+int(ntags)]]
         # If supplied the node list make reference, else use only the index.
         if 'nodes' in kwargs:
@@ -130,7 +128,6 @@ class Element(object):
         """Retorna o Elemento em formato `Struct _elementri`."""
         r = _elementri()
         r.mat = c_float(self.mat)
-        r.f = c_float(self.f)
         for i, n in enumerate(self.nodes):
             r.nodes[i] = n.i
             r.x[i] = n.x
@@ -191,7 +188,6 @@ class Mesh(object):
         # Set up constants and other variables.
         DOF = len(self.nodes)
         V = zeros(DOF, dtype=float32)
-        S = zeros(DOF, dtype=float32)
         bench = zeros(3, dtype=float32)
 
         # Set up the boundary information.
@@ -233,8 +229,7 @@ class Mesh(object):
         # Call function.
         iters = func(len(ngs), DOF, kmax, c_float(R),
                      c_float(errmin), groups, byref(ctypeslib.as_ctypes(V)),
-                     byref(ctypeslib.as_ctypes(S)), self.verbose,
-                     byref(ctypeslib.as_ctypes(bench)))
+                     self.verbose, byref(ctypeslib.as_ctypes(bench)))
 
         return V, iters, bench.tolist()
 
