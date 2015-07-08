@@ -36,13 +36,13 @@ import time
 def timeit(t=False):
     return time.time() - t if t else time.time()
 
-lib = cdll.LoadLibrary('./escheme.so')
+lib = cdll.LoadLibrary('./escheme2.so')
 
 n = 3
 err = 1E-5
 iteracoes = 20000
-#A = matrix(random.random((n, n)), dtype = float32)
 A = matrix('2 1 0; 1 2 1; 0 1 2', dtype=float32)
+#A = matrix(random.random((n, n)), dtype = float32)
 b = array(random.random(n), dtype=float32)
 x = zeros(n, dtype=float32)
 

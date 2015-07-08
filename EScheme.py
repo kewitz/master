@@ -159,7 +159,8 @@ class Mesh(object):
     def __sizeof__(self):
         return sys.getsizeof(self.elements) + sys.getsizeof(self.nodes)
 
-    def run(self, errmin=1E-7, kmax=1000, cuda=False, **kwargs):
+    def run(self, errmin=1E-7, kmax=1000, cuda=False, coloring=False,
+            mingroups=1, **kwargs):
         """Run simulation until converge to `alpha` residue."""
         if cuda:
             assert lib.getCUDAdevices() > 0, "No CUDA capable devices found."
@@ -179,8 +180,11 @@ class Mesh(object):
                     n.calc = False
 
         limit = lib.alloc(nn)
-        egs = split([e for e in self.elements], limit, 2)
-        ngs = split([n for n in self.nodes], limit, 2)
+        if coloring:
+            egs = self.getColors()
+        else:
+            egs = split([e for e in self.elements if e.dim is 2], limit,
+                        mingroups)
         c_groups = _group * len(egs)
         element_groups = []
         node_groups = []
@@ -193,8 +197,7 @@ class Mesh(object):
                 elements[j] = e.ctyped
             element_groups.append(elements)
             # Process nodes
-            # ng = self.getNodes(eg)
-            ng = ngs[i]
+            ng = self.getNodes(eg)
             c_nodes = _node*len(ng)
             nodes = c_nodes()
             for j, n in enumerate(ng):
@@ -224,11 +227,27 @@ class Mesh(object):
             r = [n.i for n in r]
         return list(set(r))
 
+    def getColors(self):
+        elements = [e for e in self.elements if e.dim is 2]
+        colors = []
+        c = 0
+        while len(elements) > 0:
+            colors.append([])
+            colors[c] = [elements.pop()]
+            nodes = [n for e in colors[c] for n in e.nodes]
+            for i, e in enumerate(elements):
+                if len(set(e.nodes).intersection(nodes)) is 0:
+                    colors[c].append(elements.pop(i))
+                    nodes = [n for e in colors[c] for n in e.nodes]
+            c += 1
+        return colors
+
     def getElements(self, nodes):
-        return [e for e in self.elements if len(set(e.nodes).intersection(nodes)) > 0]
+        return [e for e in self.elements
+                if len(set(e.nodes).intersection(nodes)) > 0]
 
     def getNodes(self, elements):
-        return list(set([n for e in elements for n in e.nodes]))
+        return list(set([n for e in elements for n in e.nodes if n.calc]))
 
     def elementsByTag(self, tags):
         """Return elements tagged by `tag`."""
@@ -257,8 +276,8 @@ class Mesh(object):
         ax.axis('equal')
         plt.show()
 
-    def plotResult(self, **kwargs):
+    def plotResult(self, result):
         t = self.triangulate()
-        plt.tricontourf(t, kwargs['result'], 15, cmap=plt.cm.rainbow)
+        plt.tricontourf(t, result, 15, cmap=plt.cm.rainbow)
         plt.colorbar()
         plt.show()

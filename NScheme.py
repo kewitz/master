@@ -160,8 +160,6 @@ class Mesh(object):
         # Map nodes and Elements.
         self.nodes = map(lambda x: Node(x), nodes)
         self.elements = map(lambda x: Element(x, nodes=self.nodes), elements)
-        self.V = zeros(len(self.nodes), dtype=float32)
-        self.S = zeros(len(self.nodes), dtype=float32)
         # Verbosity...
         if verbose:
             self.verbose = verbose
@@ -178,7 +176,8 @@ class Mesh(object):
     def DOF(self):
         return len([n for n in self.nodes if n.calc])
 
-    def run(self, R=0, errmin=1E-5, kmax=10000, cuda=False, **kwargs):
+    def run(self, R=0, errmin=1E-5, kmax=10000, cuda=False, coloring=False,
+            mingroups=1, **kwargs):
         """Run simulation until converge to `alpha` residue."""
         # Assertions and function setting.
         if cuda is True:
@@ -191,10 +190,10 @@ class Mesh(object):
             func = lib.runCPU
         # Set up constants and other variables.
         DOF = len(self.nodes)
-        V = self.V
-        S = self.S
+        V = zeros(DOF, dtype=float32)
+        S = zeros(DOF, dtype=float32)
         bench = zeros(3, dtype=float32)
-        
+
         # Set up the boundary information.
         if 'boundary' in kwargs:
             for k in kwargs['boundary']:
@@ -203,7 +202,10 @@ class Mesh(object):
                     n.calc = False
 
         limit = lib.alloc(DOF)
-        ngs = split([n for n in self.nodes if n.calc], limit, 2)
+        if coloring:
+            ngs = self.getColors()
+        else:
+            ngs = split([n for n in self.nodes if n.calc], limit, mingroups)
         c_groups = _group * len(ngs)
         node_groups = []
         element_groups = []
@@ -236,6 +238,21 @@ class Mesh(object):
 
         return V, iters, bench.tolist()
 
+    def getColors(self):
+        dofs = [n for n in self.nodes if n.calc]
+        colors = []
+        c = 0
+        while len(dofs) > 0:
+            colors.append([])
+            colors[c] = [dofs.pop()]
+            elements = [e for n in colors[c] for e in self.elements]
+            for i, n in enumerate(dofs):
+                if len(set(n.elements).intersection(elements)) is 0:
+                    colors[c].append(dofs.pop(i))
+                    elements = [e for n in colors[c] for e in n.elements]
+            c += 1
+        return colors
+
     def nodesOnLine(self, tags, indexOnly=False):
         """
         Return the list of nodes that are in elements tagged with `tags`.
@@ -251,7 +268,8 @@ class Mesh(object):
 
     def getElements(self, nodes):
         return [e for e in self.elements
-                if len(set(e.nodes).intersection(nodes)) > 0]
+                if len(set(e.nodes).intersection(nodes)) > 0
+                and e.dim is 2]
 
     def elementsByTag(self, tags):
         """Return elements tagged by `tag`."""

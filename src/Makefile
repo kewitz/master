@@ -12,7 +12,11 @@ mdf:
 nscheme:
 	$(CC) $(flags) -shared nscheme.cu -lm -o ../nscheme.so -lcuda $(gen)
 
+nscheme2:
+	$(CC) $(flags) -shared nscheme2.cu -lm -o ../nscheme2.so -lcuda $(gen)
+
 escheme:
+	$(CC) $(flags) -shared escheme2.cu -lm -o ../escheme2.so -lcuda $(gen)
 	$(CC) $(flags) -shared escheme.cu -lm -o ../escheme.so -lcuda $(gen)
 
 clean:
