@@ -48,4 +48,6 @@ typedef struct {
     unsigned int ne;
     node *nodes;
     element *elements;
+    node *d_nodes;
+    element *d_elements;
 } group;

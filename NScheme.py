@@ -78,7 +78,9 @@ class _group(Structure):
     _fields_ = [("nn", c_uint),
                 ("ne", c_uint),
                 ("nodes", POINTER(_node)),
-                ("elements", POINTER(_element))]
+                ("elements", POINTER(_element)),
+                ("d_nodes", POINTER(_node)),
+                ("d_elements", POINTER(_element))]
 
 
 class Node(object):

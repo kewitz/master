@@ -183,11 +183,9 @@ extern "C" int runGPUStream(int ng, int nn, int kmax, float R, float errmin,
     // Aloca variáveis.
     int k = 1, g, conv, *d_conv;
     float *d_V;
-    group G;
+    group *G, *Gn;
     element *d_elements;
     node *d_nodes;
-
-
 
     // Malloc e Memcpy de variáveis globais.
     smalloc(&d_V, sizeof(float)*nn);
@@ -206,17 +204,30 @@ extern "C" int runGPUStream(int ng, int nn, int kmax, float R, float errmin,
     while (conv == 1 && k < kmax) {
         conv = 0;
         smemcpy(d_conv, &conv, sizeof(int), cudaMemcpyHostToDevice);
+        G = &groups[0];
+        G->d_elements = d_elements;
+        G->d_nodes = d_nodes;
+        cma(G->d_elements, G->elements, sizeof(element)*G->ne,
+            cudaMemcpyHostToDevice, stream[0]);
+        cma(G->d_nodes, G->nodes, sizeof(node)*G->nn,
+            cudaMemcpyHostToDevice, stream[1]);
         for (g = 0; g < ng; g++) {
-            G = groups[g];
-            cma(d_elements, G.elements, sizeof(element)*G.ne,
-                cudaMemcpyHostToDevice, stream[0]);
-            cma(d_nodes, G.nodes, sizeof(node)*G.nn,
-                cudaMemcpyHostToDevice, stream[1]);
-            kernel_element<<<(1 + G.ne/BSIZE), BSIZE, 0, stream[0]>>>(G.ne,
-                d_elements);
+            G = &groups[g];
+            // cudaStreamSynchronize(stream[0]);
+            kernel_element<<<(1 + G->ne/BSIZE), BSIZE, 0, stream[0]>>>(G->ne,
+                G->d_elements);
             cudaDeviceSynchronize();
-            kernel_node<<<(1 + G.nn/BSIZE), BSIZE, 0, stream[0]>>>(G.nn,
-                errmin, R, d_elements, d_nodes, d_V, d_conv);
+            kernel_node<<<(1 + G->nn/BSIZE), BSIZE, 0, stream[0]>>>(G->nn,
+                errmin, R, G->d_elements, G->d_nodes, d_V, d_conv);
+            if (g < ng-1) {
+                Gn = &groups[g+1];
+                Gn->d_elements = G->d_elements+G->ne;
+                Gn->d_nodes = G->d_nodes+G->nn;
+                cma(Gn->d_elements, Gn->elements, sizeof(element)*Gn->ne,
+                    cudaMemcpyHostToDevice, stream[1]);
+                cma(Gn->d_nodes, Gn->nodes, sizeof(node)*Gn->nn,
+                    cudaMemcpyHostToDevice, stream[1]);
+            }
             cudaDeviceSynchronize();
         }
         cudaDeviceSynchronize();
