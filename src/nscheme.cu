@@ -141,16 +141,19 @@ extern "C" int runGPU(int ng, int nn, int kmax, float R, float errmin,
     // Iterações
     conv = 1;
     while (conv == 1 && k < kmax) {
-        conv = 0;
+        if (k%10)
+            conv = 0;
         smemcpy(d_conv, &conv, sizeof(int), cudaMemcpyHostToDevice);
         for (g = 0; g < ng; g++) {
             cudaDeviceSynchronize();
             G = groups[g];
-            smemcpy(d_nodes, G.nodes, sizeof(node)*G.nn,
-                cudaMemcpyHostToDevice);
-            // Memcpy e processamento dos elementos.
-            smemcpy(d_elements, G.elements, sizeof(element)*G.ne,
-                cudaMemcpyHostToDevice);
+            if (ng > 1 || k == 1) {
+                smemcpy(d_nodes, G.nodes, sizeof(node)*G.nn,
+                    cudaMemcpyHostToDevice);
+                // Memcpy e processamento dos elementos.
+                smemcpy(d_elements, G.elements, sizeof(element)*G.ne,
+                    cudaMemcpyHostToDevice);
+            }
             cudaDeviceSynchronize();
             kernel_element<<<(1 + G.ne/BSIZE), BSIZE>>>(G.ne, d_elements);
             // Memcpy dos nós enquanto se processa os elementos.
@@ -159,7 +162,8 @@ extern "C" int runGPU(int ng, int nn, int kmax, float R, float errmin,
                 d_elements, d_nodes, d_V, d_conv);
         }
         cudaDeviceSynchronize();
-        smemcpy(&conv, d_conv, sizeof(int), cudaMemcpyDeviceToHost);
+        if (k%10)
+            smemcpy(&conv, d_conv, sizeof(int), cudaMemcpyDeviceToHost);
         k++;
     }
 

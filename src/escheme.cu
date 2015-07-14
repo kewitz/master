@@ -251,8 +251,9 @@ extern "C" int runGPU(int ng, int nn, int kmax, float errmin, group *groups,
         cudaDeviceSynchronize();
         for (i = 0; i < ng; i++) {
             G = &groups[i];
-            smemcpy(_elements, G->elements, sizeof(element)*G->ne,
-                cudaMemcpyHostToDevice);
+            if (ng > 1)
+                smemcpy(_elements, G->elements, sizeof(element)*G->ne,
+                    cudaMemcpyHostToDevice);
             kernel_element<<<(1+G->ne/BSIZE), BSIZE>>>(G->ne, _elements);
             cudaDeviceSynchronize();
             kernel_iter_element<<<(1+G->ne/BSIZE), BSIZE>>>(G->ne, _elements,
@@ -261,8 +262,9 @@ extern "C" int runGPU(int ng, int nn, int kmax, float errmin, group *groups,
         }
         for (i = 0; i < ng; i++) {
             G = &groups[i];
-            smemcpy(_nodes, G->nodes, sizeof(node)*G->nn,
-                cudaMemcpyHostToDevice);
+            if (ng > 1)
+                smemcpy(_nodes, G->nodes, sizeof(node)*G->nn,
+                    cudaMemcpyHostToDevice);
             kernel_iter_element_fix<<<(1+G->nn/BSIZE), BSIZE>>>(G->nn, _nodes,
                 _U, _P);
             cudaDeviceSynchronize();
