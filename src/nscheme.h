@@ -38,16 +38,13 @@ typedef struct {
     unsigned int elements[10];
 } node;
 
-typedef struct {
-    unsigned int len;
-    unsigned int *nodes;
-} color;
 
 typedef struct {
     unsigned int nn;
     unsigned int ne;
+    unsigned int nc;
     node *nodes;
     element *elements;
-    node *d_nodes;
-    element *d_elements;
+    unsigned int *colors;
+    unsigned int *cnodes;
 } group;

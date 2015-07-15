@@ -34,11 +34,21 @@
 
 // Constantes
 #define DEBUG true
-#define STREAMED false
+#define CUDA true
 #define BSIZE 64
 // Macros
 #define cma(a, b, c, d, e) CudaSafeCall(cudaMemcpyAsync(a, b, c, d, e))
 
+
+// Calcula espaço teórico máximo de nós e elementos que cabem na memória da GPU.
+extern "C" unsigned int alloc(const int nn) {
+    cudaDeviceProp prop = getInfo();
+    unsigned int gm = prop.totalGlobalMem*.9 - sizeof(float)*nn*2;
+    cudaDeviceReset();
+    return cast(unsigned int, gm / (sizeof(node) + 6*sizeof(element)));
+}
+
+#if CUDA
 // vec[i] = 0.0f
 __global__ void kernel_util_zero(int nn, node *nodes, float *vec) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -72,12 +82,12 @@ __global__ void kernel_element(int ne, element *elements) {
 
 // Kernel responsável por uma iteração.
 __global__ void kernel_node(int nn, float errmin, float R, element *elements,
-    node *nodes, float *V, int *conv) {
+    node *nodes, unsigned int *color, float *V, int *conv) {
 
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= nn) return;
 
-    node N = nodes[i];
+    node N = nodes[color[i]];
 
     int e, c;
     float diag_sum = 0.0f, right_sum = 0.0f, Vo = V[N.i], Vi, diff;
@@ -108,17 +118,9 @@ __global__ void kernel_node(int nn, float errmin, float R, element *elements,
     V[N.i] = Vi;
 }
 
-// Calcula espaço teórico máximo de nós e elementos que cabem na memória da GPU.
-extern "C" unsigned int alloc(const int nn) {
-    cudaDeviceProp prop = getInfo();
-    unsigned int gm = prop.totalGlobalMem*.9 - sizeof(float)*nn*2;
-    cudaDeviceReset();
-    return cast(unsigned int, gm / (sizeof(node) + 6*sizeof(element)));
-}
-
 // Função externa que processa o problema, responsável por alocar a memória no
 // device e invocar todas os kernels necessários.
-extern "C" int runGPU(int ng, int nn, int kmax, float R, float errmin,
+extern "C" int runGPU(int ng, int nn, int nc, int kmax, float R, float errmin,
     group *groups, float *V, bool verbose, float *bench) {
     // Inicia cronômetro do benchmark.
     unsigned int maxn = alloc(nn);
@@ -130,18 +132,20 @@ extern "C" int runGPU(int ng, int nn, int kmax, float R, float errmin,
     group G;
     element *d_elements;
     node *d_nodes;
+    unsigned int *d_colors;
 
     // Malloc e Memcpy de variáveis globais.
     smalloc(&d_V, sizeof(float)*nn);
     smalloc(&d_conv, sizeof(int));
     smalloc(&d_nodes, sizeof(node)*maxn);
     smalloc(&d_elements, sizeof(element)*maxn*6);
+    smalloc(&d_colors, sizeof(unsigned int)*nn);
     smemcpy(d_V, V, sizeof(float)*nn, cudaMemcpyHostToDevice);
 
     // Iterações
     conv = 1;
     while (conv == 1 && k < kmax) {
-        if (k%10)
+        if (k%3)
             conv = 0;
         smemcpy(d_conv, &conv, sizeof(int), cudaMemcpyHostToDevice);
         for (g = 0; g < ng; g++) {
@@ -150,19 +154,22 @@ extern "C" int runGPU(int ng, int nn, int kmax, float R, float errmin,
             if (ng > 1 || k == 1) {
                 smemcpy(d_nodes, G.nodes, sizeof(node)*G.nn,
                     cudaMemcpyHostToDevice);
-                // Memcpy e processamento dos elementos.
                 smemcpy(d_elements, G.elements, sizeof(element)*G.ne,
                     cudaMemcpyHostToDevice);
+                smemcpy(d_colors, G.cnodes, sizeof(unsigned int)*G.nn,
+                    cudaMemcpyHostToDevice);
             }
-            cudaDeviceSynchronize();
+            unsigned int *color = d_colors;
             kernel_element<<<(1 + G.ne/BSIZE), BSIZE>>>(G.ne, d_elements);
-            // Memcpy dos nós enquanto se processa os elementos.
             cudaDeviceSynchronize();
-            kernel_node<<<(1 + G.nn/BSIZE), BSIZE>>>(G.nn, errmin, R,
-                d_elements, d_nodes, d_V, d_conv);
+            for (int c = 0; c < G.nc; c++) {
+                kernel_node<<<(1 + G.colors[c]/BSIZE), BSIZE>>>(G.colors[c],
+                    errmin, R, d_elements, d_nodes, color, d_V, d_conv);
+                color += G.colors[c];
+            }
         }
         cudaDeviceSynchronize();
-        if (k%10)
+        if (k%3)
             smemcpy(&conv, d_conv, sizeof(int), cudaMemcpyDeviceToHost);
         k++;
     }
@@ -177,81 +184,7 @@ extern "C" int runGPU(int ng, int nn, int kmax, float R, float errmin,
     bench[0] = cast(float, t)/CLOCKS_PER_SEC;
     return k;
 }
-
-extern "C" int runGPUStream(int ng, int nn, int kmax, float R, float errmin,
-    group *groups, float *V, bool verbose, float *bench) {
-    // Inicia cronômetro do benchmark.
-    unsigned int maxn = alloc(nn);
-    cudaDeviceReset();
-    clock_t t = clock();
-    // Aloca variáveis.
-    int k = 1, g, conv, *d_conv;
-    float *d_V;
-    group *G, *Gn;
-    element *d_elements;
-    node *d_nodes;
-
-    // Malloc e Memcpy de variáveis globais.
-    smalloc(&d_V, sizeof(float)*nn);
-    smalloc(&d_conv, sizeof(int));
-    smalloc(&d_nodes, sizeof(node)*maxn);
-    smalloc(&d_elements, sizeof(element)*maxn*6);
-    smemcpy(d_V, V, sizeof(float)*nn, cudaMemcpyHostToDevice);
-
-    // Cria streams.
-    cudaStream_t stream[2];
-    for (int i = 0; i < 2; ++i)
-        cudaStreamCreate(&stream[i]);
-
-    // Iterações
-    conv = 1;
-    while (conv == 1 && k < kmax) {
-        conv = 0;
-        smemcpy(d_conv, &conv, sizeof(int), cudaMemcpyHostToDevice);
-        G = &groups[0];
-        G->d_elements = d_elements;
-        G->d_nodes = d_nodes;
-        cma(G->d_elements, G->elements, sizeof(element)*G->ne,
-            cudaMemcpyHostToDevice, stream[0]);
-        cma(G->d_nodes, G->nodes, sizeof(node)*G->nn,
-            cudaMemcpyHostToDevice, stream[1]);
-        for (g = 0; g < ng; g++) {
-            G = &groups[g];
-            // cudaStreamSynchronize(stream[0]);
-            kernel_element<<<(1 + G->ne/BSIZE), BSIZE, 0, stream[0]>>>(G->ne,
-                G->d_elements);
-            cudaDeviceSynchronize();
-            kernel_node<<<(1 + G->nn/BSIZE), BSIZE, 0, stream[0]>>>(G->nn,
-                errmin, R, G->d_elements, G->d_nodes, d_V, d_conv);
-            if (g < ng-1) {
-                Gn = &groups[g+1];
-                Gn->d_elements = G->d_elements+G->ne;
-                Gn->d_nodes = G->d_nodes+G->nn;
-                cma(Gn->d_elements, Gn->elements, sizeof(element)*Gn->ne,
-                    cudaMemcpyHostToDevice, stream[1]);
-                cma(Gn->d_nodes, Gn->nodes, sizeof(node)*Gn->nn,
-                    cudaMemcpyHostToDevice, stream[1]);
-            }
-            cudaDeviceSynchronize();
-        }
-        cudaDeviceSynchronize();
-        smemcpy(&conv, d_conv, sizeof(int), cudaMemcpyDeviceToHost);
-        k++;
-    }
-
-    smemcpy(V, d_V, sizeof(float)*nn, cudaMemcpyDeviceToHost);
-    cudaDeviceSynchronize();
-
-    for (int i = 0; i < 2; ++i)
-        cudaStreamDestroy(stream[i]);
-
-    cudaFree(d_elements); cudaFree(d_nodes);
-    cudaFree(d_V); cudaFree(d_conv);
-
-    t = clock() - t;
-    bench[0] = cast(float, t)/CLOCKS_PER_SEC;
-    return k;
-}
+#endif
 
 void integ_element(element *E) {
     float mat = E->mat;
@@ -303,10 +236,8 @@ void calc_node(node N, float errmin, float R, float *V, element *elements,
     V[N.i] = Vi;
 }
 
-extern "C" int runCPU(int ng, int nn, int kmax, float R, float errmin,
+extern "C" int runCPU(int ng, int nn, int nc, int kmax, float R, float errmin,
     group *groups, float *V, bool verbose, float *bench) {
-    // Inicia cronômetro do benchmark.
-    clock_t t = clock();
     // Aloca variáveis.
     int i, j, k = 1;
 
@@ -320,15 +251,18 @@ extern "C" int runCPU(int ng, int nn, int kmax, float R, float errmin,
             // Integra os elementos do Grupo.
             for (j = 0; j < G.ne; j++)
                 integ_element(&G.elements[j]);
-            // Calcula os potenciais nos nós do Grupo.
-            for (j = 0; j < G.nn; j++)
-                calc_node(G.nodes[j], errmin, R, V, G.elements, &run);
+            unsigned int offset = 0;
+            for (int l = 0; l < G.nc; l++) {
+                // Calcula os potenciais nos nós do Grupo.
+                for (j = 0; j < G.colors[l]; j++)
+                    calc_node(G.nodes[G.cnodes[j+offset]], errmin, R, V,
+                        G.elements, &run);
+                offset += G.colors[l];
+            }
         }
         k++;
     }
 
-    t = clock() - t;
-    bench[0] = cast(float, t)/CLOCKS_PER_SEC;
     return k;
 }
 

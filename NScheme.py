@@ -68,19 +68,48 @@ class _node(Structure):
                 ("elements", c_uint*10)]
 
 
-class _color(Structure):
-    """Struct `color` utilizada pelo programa C."""
-    _fields_ = [("len", c_uint),
-                ("nodes", POINTER(_element))]
-
-
 class _group(Structure):
     _fields_ = [("nn", c_uint),
                 ("ne", c_uint),
+                ("nc", c_uint),
                 ("nodes", POINTER(_node)),
                 ("elements", POINTER(_element)),
-                ("d_nodes", POINTER(_node)),
-                ("d_elements", POINTER(_element))]
+                ("colors", POINTER(c_uint)),
+                ("cnodes", POINTER(c_uint))]
+
+
+class Group(object):
+    def __init__(self, colors, mesh):
+        self.nodes = [node for color in g for node in color]
+        self.elements = mesh.getElements(self.nodes)
+        self.colors = colors
+        self.mesh = mesh
+
+    @property
+    def ctyped(self):
+        mesh = self.mesh
+        nn, ne, nc = len(self.nodes), len(self.elements), len(self.colors)
+
+        elements = (_element * ne)()
+        for i, e in enumerate(self.elements):
+            elements[i] = e.ctyped
+        nodes = (_node * nn)()
+        for i, n in enumerate(self.nodes):
+            _n = n.ctyped
+            for j, e in enumerate(n.elements):
+                _n.elements[j] = self.elements.index(mesh.elements[e])
+            nodes[i] = _n
+        colors = (_color * nc)()
+        color_indexes = []
+        for i, c in enumerate(self.colors):
+            _c = _color(len(c))
+            indxs = (c_uint*len(c))()
+            for j, n in enumerate(c):
+                indxs[j] = self.nodes.index(n)
+            color_indexes.append(indxs)
+            _c.nodes = color_indexes[i]
+            colors[i] = _c
+        return _group(nn, ne, nc, nodes, elements, colors)
 
 
 class Node(object):
@@ -183,15 +212,12 @@ class Mesh(object):
         if cuda is True:
             assert lib.getCUDAdevices() > 0, "No CUDA capable devices found."
             func = lib.runGPU
-        elif cuda is "stream":
-            assert lib.getCUDAdevices() > 0, "No CUDA capable devices found."
-            func = lib.runGPUStream
         else:
             func = lib.runCPU
         # Set up constants and other variables.
-        DOF = len(self.nodes)
-        V = zeros(DOF, dtype=float32)
-        S = zeros(DOF, dtype=float32)
+        NN = len(self.nodes)
+        V = zeros(NN, dtype=float32)
+        S = zeros(NN, dtype=float32)
         bench = zeros(3, dtype=float32)
 
         # Set up the boundary information.
@@ -201,57 +227,64 @@ class Mesh(object):
                     V[n.i] = kwargs['boundary'][k]
                     n.calc = False
 
-        limit = lib.alloc(DOF)
+        limit = lib.alloc(NN)
         if coloring:
-            ngs = self.getColors()
+            ngs = self.getColors(limit, mingroups)
         else:
-            ngs = split([n for n in self.nodes if n.calc], limit, mingroups)
-        c_groups = _group * len(ngs)
-        node_groups = []
-        element_groups = []
-        groups = c_groups()
-        for i, ng in enumerate(ngs):
-            # Process elements
-            eg = self.getElements(ng)
-            c_elements = _element * len(eg)
-            elements = c_elements()
-            for j, e in enumerate(eg):
-                elements[j] = e.ctyped
-            element_groups.append(elements)
-            # Process nodes
-            c_nodes = _node * len(ng)
-            nodes = c_nodes()
-            for j, n in enumerate(ng):
+            ngs = [split([n for n in self.nodes if n.calc], limit, mingroups)]
+        ng = len(ngs)
+        nc = max([len(c) for c in ngs])
+
+        groups = (_group*ng)()
+        for i, group in enumerate(ngs):
+            nodes = [node for color in group for node in color]
+            elements = self.getElements(nodes)
+            # Populate Elements
+            groups[i] = _group(len(nodes), len(elements), len(group))
+            groups[i].elements = (_element * len(elements))()
+            for j, e in enumerate(elements):
+                groups[i].elements[j] = e.ctyped
+            # Populate Nodes
+            groups[i].nodes = (_node * len(nodes))()
+            for j, n in enumerate(nodes):
                 _n = n.ctyped
                 for k, e in enumerate(n.elements):
-                    _n.elements[k] = eg.index(self.elements[e])
-                nodes[j] = _n
-            node_groups.append(nodes)
-            # Create group
-            groups[i] = _group(len(ng), len(eg), node_groups[i],
-                               element_groups[i])
+                    _n.elements[k] = elements.index(self.elements[e])
+                groups[i].nodes[j] = _n
+            # Populate Colors
+            l = 0
+            groups[i].colors = (c_uint * len(group))()
+            groups[i].cnodes = (c_uint * len(nodes))()
+            for j, color in enumerate(group):
+                groups[i].colors[j] = len(color)
+                for k, n in enumerate(color):
+                    groups[i].cnodes[l] = nodes.index(n)
+                    l += 1
+
         # Call function.
-        iters = func(len(ngs), DOF, kmax, c_float(R),
+        iters = func(len(ngs), NN, nc, kmax, c_float(R),
                      c_float(errmin), groups, byref(ctypeslib.as_ctypes(V)),
                      self.verbose, byref(ctypeslib.as_ctypes(bench)))
         bg = timeit(t)
         return V, iters, bg
 
-    def getColors(self):
-        dofs = [n for n in self.nodes if n.calc]
-        colors = []
-        c = 0
-        while len(dofs) > 0:
-            colors.append([])
-            colors[c] = [dofs.pop()]
-            elements = [e for n in colors[c] for e in self.elements]
-            for i, n in enumerate(dofs):
-                if len(set(n.elements).intersection(elements)) is 0:
-                    colors[c].append(dofs.pop(i))
-                    elements = [e for n in colors[c] for e in n.elements]
-            c += 1
-        # print len(colors), "colors."
-        return colors
+    def getColors(self, limit, mingroups=1):
+        nodes = split([n for n in self.nodes if n.calc], limit, mingroups)
+        groups = []
+        for g, dofs in enumerate(nodes):
+            groups.append([])
+            c = 0
+            while len(dofs) > 0:
+                groups[g].append([])
+                groups[g][c] = [dofs.pop()]
+                elements = [e for n in groups[g][c] for e in self.elements]
+                for i, n in enumerate(dofs):
+                    if len(set(n.elements).intersection(elements)) is 0:
+                        groups[g][c].append(dofs.pop(i))
+                        elements = [e for n in groups[g][c]
+                                    for e in n.elements]
+                c += 1
+        return groups
 
     def nodesOnLine(self, tags, indexOnly=False):
         """
