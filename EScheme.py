@@ -153,6 +153,10 @@ class Mesh(object):
 
     def __sizeof__(self):
         return sys.getsizeof(self.elements) + sys.getsizeof(self.nodes)
+        
+    @property
+    def DOF(self):
+        return len([n for n in self.nodes if n.calc])
 
     def run(self, errmin=1E-7, kmax=1000, cuda=False, coloring=False,
             mingroups=1, **kwargs):
