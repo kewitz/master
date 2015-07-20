@@ -207,7 +207,6 @@ class Mesh(object):
     def run(self, R=0, errmin=1E-5, kmax=10000, cuda=False, coloring=False,
             mingroups=1, **kwargs):
         """Run simulation until converge to `alpha` residue."""
-        t = timeit()
         # Assertions and function setting.
         if cuda is True:
             assert lib.getCUDAdevices() > 0, "No CUDA capable devices found."
@@ -261,6 +260,7 @@ class Mesh(object):
                     groups[i].cnodes[l] = nodes.index(n)
                     l += 1
 
+        t = timeit()
         # Call function.
         iters = func(len(ngs), NN, nc, kmax, c_float(R),
                      c_float(errmin), groups, byref(ctypeslib.as_ctypes(V)),

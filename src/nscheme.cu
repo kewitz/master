@@ -145,8 +145,7 @@ extern "C" int runGPU(int ng, int nn, int nc, int kmax, float R, float errmin,
     // Iterações
     conv = 1;
     while (conv == 1 && k < kmax) {
-        if (k%3)
-            conv = 0;
+        conv = 0;
         smemcpy(d_conv, &conv, sizeof(int), cudaMemcpyHostToDevice);
         for (g = 0; g < ng; g++) {
             cudaDeviceSynchronize();
@@ -169,8 +168,7 @@ extern "C" int runGPU(int ng, int nn, int nc, int kmax, float R, float errmin,
             }
         }
         cudaDeviceSynchronize();
-        if (k%3)
-            smemcpy(&conv, d_conv, sizeof(int), cudaMemcpyDeviceToHost);
+        smemcpy(&conv, d_conv, sizeof(int), cudaMemcpyDeviceToHost);
         k++;
     }
 

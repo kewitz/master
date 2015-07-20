@@ -43,8 +43,7 @@ def test(solver):
 
 #%% NScheme
 bound = {1: 100.0, 2: 66.0, 3: 33.0, 4: 0.0}
-files = ["./res/teste1_1.msh", "./res/teste1_2.msh", "./res/teste1_3.msh",
-         "./res/teste1_4.msh", "./res/teste1_5.msh"]
+files = ["./res/teste1_1.msh", "./res/teste1_2.msh", "./res/teste1_3.msh"]
 
 # Jacobi
 c = False
@@ -54,10 +53,11 @@ test(ns)
 
 # SOR
 c = True
-for R in [0, .1, .2, .3, .4, .5, .6, .7, .8, .9]:
+for R in [.2, .4, .6, .8]:
     print "SOR R=%f" % R
     test(ns)
 
-# EScheme CG
+#%% EScheme CG
+c = False
 print "EScheme CG"
 test(es)
