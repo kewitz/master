@@ -113,9 +113,9 @@ __global__ void kernel_node(int nn, float errmin, float R, element *elements,
     Vi = right_sum/diag_sum;
     diff = Vi - Vo;
     Vi += R*diff;
+    V[N.i] = Vi;
     c = (abs(diff/Vi) > errmin);
     atomicOr(conv, c);
-    V[N.i] = Vi;
 }
 
 // Função externa que processa o problema, responsável por alocar a memória no
@@ -262,14 +262,4 @@ extern "C" int runCPU(int ng, int nn, int nc, int kmax, float R, float errmin,
     }
 
     return k;
-}
-
-extern "C" void test_group(int ng, group *groups) {
-    unsigned int i;
-
-    for (i = 0; i < ng; i++) {
-        group G = groups[i];
-        printf("Group %i has %i nodes and %i elements.\n", i, G.nn, G.ne);
-        printf("Nodes: %p\t Elements: %p\n\n", G.nodes, G.elements);
-    }
 }

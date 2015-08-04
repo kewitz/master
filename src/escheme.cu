@@ -46,11 +46,8 @@ extern "C" unsigned int alloc(const int nn) {
 }
 
 #if CUDA
-// Kernel de pré-processamento responsável por calcular as matrizes de contribu-
-// ição de todos os elementos.
-//    ne: número de elementos.
-//    elements: array de elementos da malha.
-//    elements: array de nós da malha.
+// Kernel de responsável por calcular as matrizes de contribuição de um
+// elemento.
 __global__ void kernel_element(int ne, element *elements) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= ne) return;
@@ -74,11 +71,6 @@ __global__ void kernel_element(int ne, element *elements) {
 }
 
 // Kernel de pré-processamento responsável por calcular diag_sum e right_sum.
-//    ne: número de elementos.
-//    elements: array de elementos da malha.
-//    V: vetor de tensões dos nós.
-//    dsum: vetor diag_sum.
-//    rsum: vetor right_sum.
 __global__ void kernel_preprocess(int ne, element *elements, float *V,
     float *dsum, float *rsum) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -110,6 +102,7 @@ __global__ void kernel_precond(int nn, node *nodes, float *dsum, float *rsum,
     P[N.i] = ri;
 }
 
+// U = SS*P
 __global__ void kernel_iter_element(int ne, element *elements, float *U,
     float *P) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -126,6 +119,7 @@ __global__ void kernel_iter_element(int ne, element *elements, float *U,
               E.matriz[2]*P[n3]);
 }
 
+// Corrige os valores de U para nós submetidos à condição de contorno.
 __global__ void kernel_iter_element_fix(int nn, node *nodes, float *U,
     float *P) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -187,15 +181,6 @@ __global__ void kernel_util_addtovec2(int size, const float scalar, float *vecA,
 }
 
 // Função externa que processa o problema na GPU.
-//    ne: número de elementos.
-//    nn: número de nós.
-//    kmax: número máximo de iterações.
-//    errmin: erro mínimo para considerar a convergência do resultado.
-//    elements: array de elementos da malha.
-//    nodes: array de nós da malha.
-//    V: vetor de tensões dos nós.
-//    verbose: se 'true' imprime informações do algorítmo.
-//    bench: array de tempos de processamento para benchmarking.
 extern "C" int runGPU(int ng, int nn, int kmax, float errmin, group *groups,
     float *V, bool verbose, float *bench) {
     clock_t t = clock();
@@ -329,15 +314,6 @@ void integ_element(element *E) {
     E->matriz[5] = (q2*q3 + r2*r3)*cof;
 }
 // Função externa que processa o problema no CPU.
-//    ne: número de elementos.
-//    nn: número de nós.
-//    kmax: número máximo de iterações.
-//    errmin: erro mínimo para considerar a convergência do resultado.
-//    elements: array de elementos da malha.
-//    nodes: array de nós da malha.
-//    V: vetor de tensões dos nós.
-//    verbose: se 'true' imprime informações do algorítmo.
-//    bench: array de tempos de processamento para benchmarking.
 extern "C" int runCPU(int ng, int nn, int kmax, float errmin, group *groups,
     float *V, bool verbose, float *bench) {
     clock_t t = clock();

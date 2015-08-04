@@ -25,8 +25,7 @@
 // Structs
 typedef struct {
     unsigned int nodes[3];
-    // C11 C22 C33 C12 C13 C23
-    float matriz[6];
+    float matriz[6];  // C11 C22 C33 C12 C13 C23
     float mat;
     float x[3];
     float y[3];

@@ -153,13 +153,12 @@ class Mesh(object):
 
     def __sizeof__(self):
         return sys.getsizeof(self.elements) + sys.getsizeof(self.nodes)
-        
+
     @property
     def DOF(self):
         return len([n for n in self.nodes if n.calc])
 
-    def run(self, errmin=1E-7, kmax=1000, cuda=False, coloring=False,
-            mingroups=1, **kwargs):
+    def run(self, errmin=1E-7, kmax=1000, cuda=False, mingroups=1, **kwargs):
         """Run simulation until converge to `alpha` residue."""
         t = timeit()
         if cuda:
@@ -179,11 +178,8 @@ class Mesh(object):
                     n.calc = False
 
         limit = lib.alloc(nn)
-        if coloring:
-            egs = self.getColors()
-        else:
-            egs = split([e for e in self.elements if e.dim is 2], limit,
-                        mingroups)
+        egs = split([e for e in self.elements if e.dim is 2], limit,
+                    mingroups)
         c_groups = _group * len(egs)
         element_groups = []
         node_groups = []
