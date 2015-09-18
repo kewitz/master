@@ -89,8 +89,8 @@ __global__ void kernel_preprocess(int ne, element *elements, float *V,
     atomicAdd(&rsum[n3], - E.matriz[4]*V[n1] - E.matriz[5]*V[n2]);
 }
 
-// Kernel de pré-condicionamento.
-__global__ void kernel_precond(int nn, node *nodes, float *dsum, float *rsum,
+// Kernel de pré-processamento responsável por calcular P = R = b - Ax.
+__global__ void kernel_residue(int nn, node *nodes, float *dsum, float *rsum,
     float *R, float *P, float *V) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= nn) return;
@@ -123,13 +123,11 @@ __global__ void kernel_iter_element(int ne, element *elements, float *U,
 __global__ void kernel_iter_element_fix(int nn, node *nodes, float *U,
     float *P) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
-
     if (i >= nn) return;
 
     node N = nodes[i];
-    if (!N.calc) {
+    if (!N.calc)
         U[N.i] = P[N.i];
-    }
 }
 
 // vec[i] = 0.0f
@@ -147,32 +145,20 @@ __global__ void kernel_util_vecsummult(int size, float *vecA, float *vecB,
     int ti = threadIdx.x;
     __shared__ float _sum[BSIZE];
 
-
     _sum[ti] = (i < size) ? vecA[i]*vecB[i] : 0.0f;
     __syncthreads();
 
     for (int s = blockDim.x/2; s > 0; s >>= 1) {
        if (ti < s)
            _sum[ti] += _sum[ti + s];
-
        __syncthreads();
     }
-    if (ti == 0) {
+    if (ti == 0)
         atomicAdd(sum, _sum[0]);
-    }
-}
-
-// vecA[i] += scalar * vecB[i]
-__global__ void kernel_util_addtovec(int size, const float scalar, float *vecA,
-    float *vecB) {
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i >= size) return;
-
-    vecA[i] += scalar*vecB[i];
 }
 
 // vecA[i] = vecB[i] + scalar*vecC[i]
-__global__ void kernel_util_addtovec2(int size, const float scalar, float *vecA,
+__global__ void kernel_util_addtovec(int size, const float scalar, float *vecA,
     float *vecB, float *vecC) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= size) return;
@@ -225,7 +211,7 @@ extern "C" int runGPU(int ng, int nn, int kmax, float errmin, group *groups,
     for (i = 0; i < ng; i++) {
         G = &groups[i];
         smemcpy(_nodes, G->nodes, sizeof(node)*G->nn, cudaMemcpyHostToDevice);
-        kernel_precond<<<(1+G->nn/BSIZE), BSIZE>>>(G->nn, _nodes, _dsum, _rsum,
+        kernel_residue<<<(1+G->nn/BSIZE), BSIZE>>>(G->nn, _nodes, _dsum, _rsum,
             _R, _P, _V);
         cudaDeviceSynchronize();
     }
@@ -239,8 +225,10 @@ extern "C" int runGPU(int ng, int nn, int kmax, float errmin, group *groups,
             if (ng > 1)
                 smemcpy(_elements, G->elements, sizeof(element)*G->ne,
                     cudaMemcpyHostToDevice);
+            // Integra Elemento.
             kernel_element<<<(1+G->ne/BSIZE), BSIZE>>>(G->ne, _elements);
             cudaDeviceSynchronize();
+            // U = A*R
             kernel_iter_element<<<(1+G->ne/BSIZE), BSIZE>>>(G->ne, _elements,
                 _U, _P);
             cudaDeviceSynchronize();
@@ -263,8 +251,8 @@ extern "C" int runGPU(int ng, int nn, int kmax, float errmin, group *groups,
         getf(&sum1, _sum1); getf(&sum2, _sum2);
 
         alpha = sum2 != 0.0 ? sum1/sum2 : 0.0;
-        kernel_util_addtovec<<<(1+nn/BSIZE), BSIZE>>>(nn, alpha, _V, _P);
-        kernel_util_addtovec<<<(1+nn/BSIZE), BSIZE>>>(nn, -alpha, _R, _U);
+        kernel_util_addtovec<<<(1+nn/BSIZE), BSIZE>>>(nn, alpha, _V, _V, _P);
+        kernel_util_addtovec<<<(1+nn/BSIZE), BSIZE>>>(nn, -alpha, _R, _R, _U);
         cudaDeviceSynchronize();
 
         sum3 = 0.0f; sum4 = 0.0f;
@@ -275,7 +263,7 @@ extern "C" int runGPU(int ng, int nn, int kmax, float errmin, group *groups,
         getf(&sum3, _sum3); getf(&sum4, _sum4);
 
         beta = sum2 != 0.0 ? -sum4/sum2 : 0.0;
-        kernel_util_addtovec2<<<(1+nn/BSIZE), BSIZE>>>(nn, beta, _P, _R, _P);
+        kernel_util_addtovec<<<(1+nn/BSIZE), BSIZE>>>(nn, beta, _P, _R, _P);
         cudaDeviceSynchronize();
 
         k++;
@@ -355,7 +343,7 @@ extern "C" int runCPU(int ng, int nn, int kmax, float errmin, group *groups,
     float *p = cast(float*, malloc(nn*sizeof(float)));
     float *u = cast(float*, malloc(nn*sizeof(float)));
 
-    // Pré-condicionamento.
+    // r = b - Ax
     for (i = 0; i < ng; i++) {
         G = &groups[i];
         for (j = 0; j < G->nn; j++) {

@@ -71,7 +71,7 @@ __global__ void kernel_element(int ne, element *elements) {
     float det = E.x[1]*E.y[2] + E.x[0]*E.y[1] + E.x[2]*E.y[0]
               - E.x[0]*E.y[2] - E.x[2]*E.y[1] - E.x[1]*E.y[0];
     float cof = (E.mat/det)/2;
-    // Calcula a matriz de contribuições do elemento.
+    // Calcula a matriz de rigidez do elemento.
     elements[i].matriz[0] = (q1*q1 + r1*r1)*cof;
     elements[i].matriz[1] = (q2*q2 + r2*r2)*cof;
     elements[i].matriz[2] = (q3*q3 + r3*r3)*cof;
@@ -110,10 +110,15 @@ __global__ void kernel_node(int nn, float errmin, float R, element *elements,
         }
     }
 
+    // Calcula Vi
     Vi = right_sum/diag_sum;
+    // Calcula a diferença
     diff = Vi - Vo;
+    // SOR
     Vi += R*diff;
+    // Salva resultado na memória global.
     V[N.i] = Vi;
+    // Calcula convergência da célula
     c = (abs(diff/Vi) > errmin);
     atomicOr(conv, c);
 }
@@ -157,10 +162,10 @@ extern "C" int runGPU(int ng, int nn, int nc, int kmax, float R, float errmin,
                     cudaMemcpyHostToDevice);
                 smemcpy(d_colors, G.cnodes, sizeof(unsigned int)*G.nn,
                     cudaMemcpyHostToDevice);
+                kernel_element<<<(1 + G.ne/BSIZE), BSIZE>>>(G.ne, d_elements);
             }
-            unsigned int *color = d_colors;
-            kernel_element<<<(1 + G.ne/BSIZE), BSIZE>>>(G.ne, d_elements);
             cudaDeviceSynchronize();
+            unsigned int *color = d_colors;
             for (int c = 0; c < G.nc; c++) {
                 kernel_node<<<(1 + G.colors[c]/BSIZE), BSIZE>>>(G.colors[c],
                     errmin, R, d_elements, d_nodes, color, d_V, d_conv);

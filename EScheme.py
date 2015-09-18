@@ -37,7 +37,7 @@ lib.hello()
 
 def timeit(t=False):
     """Função cronômetro."""
-    return time.time() - t if t else time.time()
+    return time.clock() - t if t else time.clock()
 
 
 def split(array, limit, minStacks=False):

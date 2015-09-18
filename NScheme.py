@@ -39,7 +39,7 @@ lib.alloc._restype_ = c_uint
 
 def timeit(t=False):
     """Função cronômetro."""
-    return time.time() - t if t else time.time()
+    return time.clock() - t if t else time.clock()
 
 
 def split(array, limit, minStacks=False):
@@ -191,7 +191,7 @@ class Mesh(object):
         # Verbosity...
         if verbose:
             self.verbose = verbose
-            print "Done parsing {0} nodes and {1} elements."\
+            print "[!] Done parsing {0} nodes and {1} elements."\
                   .format(len(nodes), len(elements))
         if self.debug:
             print "[!] Parse took %.3f ms" % timeit(t)
@@ -259,7 +259,8 @@ class Mesh(object):
                 for k, n in enumerate(color):
                     groups[i].cnodes[l] = nodes.index(n)
                     l += 1
-
+        if self.verbose:
+            print "[!] Started processing."
         t = timeit()
         # Call function.
         iters = func(len(ngs), NN, nc, kmax, c_float(R),
@@ -269,23 +270,40 @@ class Mesh(object):
         return V, iters, bg
 
     def getColors(self, limit, mingroups=1):
+        if self.debug:
+            t = timeit()
+        if self.verbose:
+            print "[!] Creating colors..."
         nodes = split([n for n in self.nodes if n.calc], limit, mingroups)
         groups = []
-        for g, dofs in enumerate(nodes):
+        for g, dofs in enumerate(nodes):            
             groups.append([])
-            c = 0
-            while len(dofs) > 0:
-                groups[g].append([])
-                groups[g][c] = [dofs.pop()]
-                elements = [e for n in groups[g][c] for e in self.elements]
-                for i, n in enumerate(dofs):
-                    if len(set(n.elements).intersection(elements)) is 0:
-                        groups[g][c].append(dofs.pop(i))
-                        elements = [e for n in groups[g][c]
-                                    for e in n.elements]
-                c += 1
+            g_elements = [set()]
+            for i, n in enumerate(dofs):
+                elements = set(n.elements)
+                new = True
+                for c, color in enumerate(groups[g]):
+                    if len(elements.intersection(g_elements[c])) is 0:
+                        groups[g][c].append(n)
+                        g_elements[c] = g_elements[c].union(elements)
+                        new = False
+                        break
+                if new:
+                    groups[g].append([n])
+                    g_elements.append(elements)
+
+            if self.debug:
+                print "[!] Group %i with %i colors." %(g, len(groups[g]))
+        if self.debug:
+            print "[!] Done in %.3f seconds." % timeit(t)
         return groups
 
+    def makeColors(self, limit, bounds, mingroups=1):
+        for k in bounds:
+            for n in self.nodesOnLine(k):
+                n.calc = False
+        return self.getColors(limit, mingroups)
+        
     def nodesOnLine(self, tags, indexOnly=False):
         """
         Return the list of nodes that are in elements tagged with `tags`.

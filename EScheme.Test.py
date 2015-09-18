@@ -5,8 +5,8 @@ import matplotlib.pyplot as plt
 
 path = """./res/"""
 
-m = es.Mesh(file=path + "teste1_5.msh", verbose=True)
-bound = {1: 100.0, 2: 66.0, 3: 33.0, 4: 0.0}
+m = es.Mesh(file=path + "L10.msh", verbose=True)
+bound = {2: 100.0, 5: 0.0}
 c = False
 
 vc, ic, bc = m.run(cuda=False, coloring=c, boundary=bound, errmin=1E-4, kmax=10000)
@@ -16,3 +16,4 @@ print "GPU: %i iterações em %.2f segundos." % (ig, bg)
 
 emax = max([a for a in abs((vg-vc)/vc) if str(a) != 'nan'])
 print "Erro relativo máximo: %E" % emax
+m.plotResult(vg)
